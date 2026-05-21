@@ -1,0 +1,56 @@
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ---- Virtual envs ----
+.venv/
+venv/
+env/
+
+# ---- IDE ----
+.idea/
+.vscode/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- Datasets (too large for GitHub) ----
+Celeb-DF/
+Celeb-DF-recompressed/
+face_cache/
+frames/
+raw_data/
+
+# ---- Model weights / training outputs (often >100MB) ----
+checkpoints/
+output/
+outputs/
+runs/
+logs/
+*.pth
+*.pt
+*.h5
+*.onnx
+*.pkl
+*.joblib
+
+# ---- Large media ----
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.zip
+*.rar
+*.tar
+*.gz
+
+# ---- Secrets ----
+.env
+*.key
+*.pem
+secrets.json
