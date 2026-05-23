@@ -19,8 +19,25 @@ env/
 .DS_Store
 Thumbs.db
 
+# Datasets
+Celeb-real/
+Celeb-DF-recompressed/
+
+# Face-crop caches
+face_cache/
+face_cache_*/
+
+# Training outputs
+checkpoints/
+results/
+
+# Python cache
+__pycache__/
+.pytest_cache/
+
 # ---- Datasets (too large for GitHub) ----
 Celeb-DF/
+Celeb-real/
 Celeb-DF-recompressed/
 face_cache/
 frames/
@@ -54,3 +71,5 @@ logs/
 *.key
 *.pem
 secrets.json
+
+

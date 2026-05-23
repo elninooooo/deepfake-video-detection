@@ -88,6 +88,66 @@ To skip cross-compression entirely, point `--src` in step 3 at the original
 `../Celeb-DF` — the output sub-folder will be `face_cache/crf_src/`, and you
 should then pass `--train_crf crf_src` to all training/eval scripts.
 
+## V1 temporal sampling ablation on original videos
+
+The V1 TIM baseline can be compared under different temporal sampling
+strategies while keeping the source video quality unchanged. These experiments
+use the original Celeb-DF videos only, so every generated cache contains a
+`crf_src/` sub-folder. Keep each sampling strategy in its own `--out`
+directory; an existing `index.json` causes previously processed videos to be
+skipped.
+
+Sampling definitions:
+
+| Experiment | Sampling method | Cached dataset path | V1 input |
+| ---------- | --------------- | ------------------- | -------- |
+| V1-uniform16 | 16 frames spread over the full video | `face_cache_uniform16/crf_src/` | 16 frames |
+| V1-uniform32 | 32 frames spread over the full video | `face_cache_uniform32/crf_src/` | 32 frames |
+| V1-clip16-S1 | Center clip of 16 consecutive source frames | `face_cache_clip16_s1/crf_src/` | 16 frames |
+| V1-clip16-S2 | Center clip of 16 frames, source-frame stride 2 | `face_cache_clip16_s2/crf_src/` | 16 frames |
+| V1-clip16-S4 | Center clip of 16 frames, source-frame stride 4 | `face_cache_clip16_s4/crf_src/` | 16 frames |
+
+From this repository root, where the original dataset folder is `Celeb-real/`,
+generate each face-crop cache as follows:
+
+```bash
+# Existing baseline: frames distributed across the whole video.
+python data_pipeline/preprocess_faces.py --src Celeb-real --splits splits.json --out face_cache_uniform16 --num_frames 16 --sampling uniform --image_size 224
+
+# More uniformly distributed frames; changes both sampled duration and V1 input length.
+python data_pipeline/preprocess_faces.py --src Celeb-real --splits splits.json --out face_cache_uniform32 --num_frames 32 --sampling uniform --image_size 224
+
+# Fixed-length TIM continuity ablations: only source-frame spacing changes.
+python data_pipeline/preprocess_faces.py --src Celeb-real --splits splits.json --out face_cache_clip16_s1 --num_frames 16 --sampling clip --frame_stride 1 --image_size 224
+python data_pipeline/preprocess_faces.py --src Celeb-real --splits splits.json --out face_cache_clip16_s2 --num_frames 16 --sampling clip --frame_stride 2 --image_size 224
+python data_pipeline/preprocess_faces.py --src Celeb-real --splits splits.json --out face_cache_clip16_s4 --num_frames 16 --sampling clip --frame_stride 4 --image_size 224
+```
+
+Train one independently named V1 model for each cache:
+
+```bash
+python run_v1_baseline.py --face_cache face_cache_uniform16 --train_crf crf_src --val_crf crf_src --n_frames 16 --name v1_uniform16 --device cuda
+python run_v1_baseline.py --face_cache face_cache_uniform32 --train_crf crf_src --val_crf crf_src --n_frames 32 --name v1_uniform32 --device cuda
+python run_v1_baseline.py --face_cache face_cache_clip16_s1 --train_crf crf_src --val_crf crf_src --n_frames 16 --name v1_clip16_s1 --device cuda
+python run_v1_baseline.py --face_cache face_cache_clip16_s2 --train_crf crf_src --val_crf crf_src --n_frames 16 --name v1_clip16_s2 --device cuda
+python run_v1_baseline.py --face_cache face_cache_clip16_s4 --train_crf crf_src --val_crf crf_src --n_frames 16 --name v1_clip16_s4 --device cuda
+```
+
+The corresponding trained models are saved under:
+
+```text
+checkpoints/v1_uniform16/best.pth
+checkpoints/v1_uniform32/best.pth
+checkpoints/v1_clip16_s1/best.pth
+checkpoints/v1_clip16_s2/best.pth
+checkpoints/v1_clip16_s4/best.pth
+```
+
+For the continuity ablation, compare `V1-clip16-S1`, `S2`, and `S4` first:
+all three use 16 input frames and differ only in temporal spacing. Compare
+the uniform variants separately because `V1-uniform32` also increases input
+sequence length and computational cost.
+
 ## Training
 
 ```bash
