@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset, DataLoader
 from tqdm import tqdm
 
 # Ensure we can run the script from anywhere
@@ -70,6 +70,17 @@ def adjust_lr(optimizer, factor: float, min_lr: float) -> bool:
     return min(new_lrs) > min_lr
 
 
+def build_split_dataset(args, crfs, split: str, train: bool):
+    datasets = [
+        CelebDFClipDataset(args.splits, args.face_cache, crf_tag=crf,
+                           split=split, n_frames=args.n_frames, train=train)
+        for crf in crfs
+    ]
+    if len(datasets) == 1:
+        return datasets[0]
+    return ConcatDataset(datasets)
+
+
 def main():
     args = parse_train_args()
     set_seed(args.seed)
@@ -81,13 +92,11 @@ def main():
     log_path = ckpt_dir / "train_log.jsonl"
 
     # ---- dataset ---------------------------------------------------------
-    val_crf = args.val_crf or args.train_crf
-    train_set = CelebDFClipDataset(args.splits, args.face_cache,
-                                   crf_tag=args.train_crf, split="train",
-                                   n_frames=args.n_frames, train=True)
-    val_set = CelebDFClipDataset(args.splits, args.face_cache,
-                                 crf_tag=val_crf, split="val",
-                                 n_frames=args.n_frames, train=False)
+    train_crfs = args.train_crfs or [args.train_crf]
+    val_crfs = args.val_crfs or (train_crfs if args.train_crfs else [args.val_crf or args.train_crf])
+    train_set = build_split_dataset(args, train_crfs, split="train", train=True)
+    val_set = build_split_dataset(args, val_crfs, split="val", train=False)
+    print(f"train crfs: {train_crfs}  val crfs: {val_crfs}")
     print(f"train clips: {len(train_set)}  val clips: {len(val_set)}")
 
     sampler = make_class_balanced_sampler(train_set) if args.use_balanced_sampler else None

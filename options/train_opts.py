@@ -13,6 +13,10 @@ def add_common_args(p: argparse.ArgumentParser):
                    help="Which crf{N} sub-folder under face_cache to train on")
     p.add_argument("--val_crf", default=None,
                    help="crf folder used for validation (defaults to --train_crf)")
+    p.add_argument("--train_crfs", nargs="+", default=None,
+                   help="Multiple CRF folders to combine for training; overrides --train_crf")
+    p.add_argument("--val_crfs", nargs="+", default=None,
+                   help="Multiple CRF folders to combine for validation; defaults to --train_crfs")
     p.add_argument("--n_frames", type=int, default=16)
 
     # model

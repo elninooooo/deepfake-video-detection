@@ -179,6 +179,32 @@ python eval_cross_compression.py \
     --crfs crf0 crf23 crf40
 ```
 
+### Mixed-CRF training
+
+Train one detector with the original domain and the three recompressed
+domains combined:
+
+```bash
+python train.py \
+    --variant v1 \
+    --face_cache face_cache \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --val_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 \
+    --name v1_tim_mixed_crf \
+    --device cuda
+
+python eval_cross_compression.py \
+    --ckpt checkpoints/v1_tim_mixed_crf/best.pth \
+    --variant v1 \
+    --face_cache face_cache \
+    --train_crf mixed \
+    --crfs crf_src crf0 crf23 crf40 \
+    --include_mixed \
+    --n_frames 16 \
+    --out_dir results/cross_crf_uniform16
+```
+
 ## Verifying installation
 
 ```bash

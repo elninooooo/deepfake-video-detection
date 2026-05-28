@@ -15,7 +15,7 @@ from typing import List, Optional
 import cv2
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import ConcatDataset, Dataset
 
 
 def _read_jpg(path: Path) -> np.ndarray:
@@ -94,10 +94,21 @@ class CelebDFClipDataset(Dataset):
         return x, y, meta
 
 
-def make_class_balanced_sampler(dataset: CelebDFClipDataset):
+def _dataset_labels(dataset: Dataset) -> List[int]:
+    if isinstance(dataset, CelebDFClipDataset):
+        return [r["label"] for r in dataset.records]
+    if isinstance(dataset, ConcatDataset):
+        labels = []
+        for child in dataset.datasets:
+            labels.extend(_dataset_labels(child))
+        return labels
+    raise TypeError(f"Unsupported dataset type for balanced sampling: {type(dataset).__name__}")
+
+
+def make_class_balanced_sampler(dataset: Dataset):
     """Return a WeightedRandomSampler that draws real and fake clips with equal probability."""
     from torch.utils.data import WeightedRandomSampler
-    labels = np.array([r["label"] for r in dataset.records])
+    labels = np.array(_dataset_labels(dataset))
     n_real = max(1, int((labels == 0).sum()))
     n_fake = max(1, int((labels == 1).sum()))
     w = np.where(labels == 0, 1.0 / n_real, 1.0 / n_fake)
