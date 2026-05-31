@@ -205,6 +205,36 @@ python eval_cross_compression.py \
     --out_dir results/cross_crf_uniform16
 ```
 
+### Validation-threshold calibration
+
+To separate score-distribution shift from ranking performance, calibrate the
+decision threshold on the validation split and apply it unchanged to test:
+
+```bash
+python eval_threshold_calibration.py \
+    --ckpt checkpoints/v1_tim_crf0/best.pth \
+    --variant v1 \
+    --face_cache face_cache \
+    --train_crf crf0 \
+    --crfs crf0 crf23 crf40 \
+    --threshold_scope domain \
+    --threshold_method f1 \
+    --n_frames 16 \
+    --out_dir results/threshold_calibration
+
+python eval_threshold_calibration.py \
+    --ckpt checkpoints/v1_tim_mixed_all/best.pth \
+    --variant v1 \
+    --face_cache face_cache \
+    --train_crf mixed \
+    --crfs crf_src crf0 crf23 crf40 \
+    --include_mixed \
+    --threshold_scope mixed \
+    --threshold_method f1 \
+    --n_frames 16 \
+    --out_dir results/threshold_calibration
+```
+
 ## Verifying installation
 
 ```bash
