@@ -20,7 +20,7 @@ def add_common_args(p: argparse.ArgumentParser):
     p.add_argument("--n_frames", type=int, default=16)
 
     # model
-    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4"], default="v1")
+    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4", "v5", "v6"], default="v1")
     p.add_argument("--mask_ratio", type=float, default=0.5)
     p.add_argument("--mask_radius_ratio", type=float, default=0.5)
     p.add_argument("--d_model", type=int, default=512)

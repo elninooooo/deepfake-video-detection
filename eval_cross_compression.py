@@ -71,7 +71,7 @@ def eval_on_crfs(model, args, crfs, split, device, desc):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--ckpt", required=True)
-    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4"], required=True)
+    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4", "v5", "v6"], required=True)
     p.add_argument("--splits", default="splits.json")
     p.add_argument("--face_cache", default="face_cache")
     p.add_argument("--train_crf", required=True,

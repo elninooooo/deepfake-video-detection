@@ -4,7 +4,7 @@ End-to-end implementation of the methodology described in
 `phase+transformer+Mask+Methodology(baha).docx` and
 `phase-transformer-mask-methodology-baha-buzzing-blossom.docx`.
 
-It implements four variants in a single codebase:
+It implements six variants in a single codebase:
 
 | Variant | TIM | Phase | HF Mask |
 | ------- | --- | ----- | ------- |
@@ -12,6 +12,13 @@ It implements four variants in a single codebase:
 | V2 (Phase-only)          |   | ✓ |   |
 | V3 (TIM + Phase)         | ✓ | ✓ |   |
 | V4 (TIM + Phase + Mask, full) | ✓ | ✓ | ✓ |
+
+Additional phase-first residual variants:
+
+| Variant | Strategy | HF Mask |
+| ------- | -------- | ------- |
+| V5 (Phase-Residual) | Phase map, then temporal residual | |
+| V6 (Phase-Residual + Mask) | Masked phase map, then temporal residual | yes |
 
 ## Repository layout
 

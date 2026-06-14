@@ -7,10 +7,12 @@ from modelsgenerate.full_model import ModelConfig, PhaseTransformerDetector
 
 def _build(variant):
     flags = {
-        "v1": dict(use_tim=True,  use_phase=False, use_mask=False),
-        "v2": dict(use_tim=False, use_phase=True,  use_mask=False),
-        "v3": dict(use_tim=True,  use_phase=True,  use_mask=False),
-        "v4": dict(use_tim=True,  use_phase=True,  use_mask=True),
+        "v1": dict(use_tim=True,  use_phase=False, use_mask=False, phase_residual=False),
+        "v2": dict(use_tim=False, use_phase=True,  use_mask=False, phase_residual=False),
+        "v3": dict(use_tim=True,  use_phase=True,  use_mask=False, phase_residual=False),
+        "v4": dict(use_tim=True,  use_phase=True,  use_mask=True,  phase_residual=False),
+        "v5": dict(use_tim=False, use_phase=True,  use_mask=False, phase_residual=True),
+        "v6": dict(use_tim=False, use_phase=True,  use_mask=True,  phase_residual=True),
     }[variant]
     return PhaseTransformerDetector(ModelConfig(**flags, max_len=16))
 
@@ -41,6 +43,24 @@ def test_v4_forward_and_mask_changes():
     x = torch.rand(2, 8, 3, 64, 64)
     m.train()
     torch.manual_seed(0)
+    y_train = m(x)
+    m.eval()
+    y_eval = m(x)
+    assert y_train.shape == (2, 1)
+    assert y_eval.shape == (2, 1)
+
+
+def test_v5_phase_residual_forward():
+    m = _build("v5")
+    x = torch.rand(1, 8, 3, 64, 64)
+    y = m(x)
+    assert y.shape == (1, 1)
+
+
+def test_v6_phase_residual_mask_forward():
+    m = _build("v6")
+    x = torch.rand(2, 8, 3, 64, 64)
+    m.train()
     y_train = m(x)
     m.eval()
     y_eval = m(x)
