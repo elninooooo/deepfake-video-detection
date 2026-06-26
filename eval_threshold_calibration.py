@@ -171,6 +171,11 @@ def main():
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--mask_ratio", type=float, default=0.5)
     p.add_argument("--mask_radius_ratio", type=float, default=0.5)
+    p.add_argument("--phase_mode", choices=["raw", "weighted", "mid_weighted"],
+                   default="raw")
+    p.add_argument("--phase_confidence_quantile", type=float, default=0.95)
+    p.add_argument("--phase_mid_low", type=float, default=0.15)
+    p.add_argument("--phase_mid_high", type=float, default=0.65)
     p.add_argument("--d_model", type=int, default=512)
     p.add_argument("--n_heads", type=int, default=4)
     p.add_argument("--device", default="cuda", choices=["cuda", "cpu"])

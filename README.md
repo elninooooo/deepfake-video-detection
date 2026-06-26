@@ -171,6 +171,35 @@ python train.py --variant v3 --train_crf crf23 --epochs 30 --batch_size 4
 Best checkpoints land in `checkpoints/<run_name>/best.pth`, training logs in
 `checkpoints/<run_name>/train_log.jsonl`.
 
+### Phase representation ablation
+
+Keep the V2 phase-only architecture fixed and change only the phase
+representation:
+
+```bash
+# V2a: raw sin/cos phase (legacy V2)
+python train.py --variant v2 --phase_mode raw \
+    --face_cache face_cache_s2_all \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --val_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 --name v2a_phase_raw_s2_mixed
+
+# V2b: log-magnitude confidence-weighted phase
+python train.py --variant v2 --phase_mode weighted \
+    --face_cache face_cache_s2_all \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --val_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 --name v2b_phase_weighted_s2_mixed
+
+# V2c: confidence-weighted phase restricted to normalized radius [0.15, 0.65]
+python train.py --variant v2 --phase_mode mid_weighted \
+    --phase_mid_low 0.15 --phase_mid_high 0.65 \
+    --face_cache face_cache_s2_all \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --val_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 --name v2c_phase_mid_weighted_s2_mixed
+```
+
 ## Evaluation
 
 ```bash

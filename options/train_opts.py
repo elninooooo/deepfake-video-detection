@@ -23,6 +23,15 @@ def add_common_args(p: argparse.ArgumentParser):
     p.add_argument("--variant", choices=["v1", "v2", "v3", "v4", "v5", "v6"], default="v1")
     p.add_argument("--mask_ratio", type=float, default=0.5)
     p.add_argument("--mask_radius_ratio", type=float, default=0.5)
+    p.add_argument("--phase_mode",
+                   choices=["raw", "weighted", "mid_weighted"], default="raw",
+                   help="Phase representation used by phase-enabled variants.")
+    p.add_argument("--phase_confidence_quantile", type=float, default=0.95,
+                   help="Log-magnitude quantile used to normalize phase confidence.")
+    p.add_argument("--phase_mid_low", type=float, default=0.15,
+                   help="Lower normalized radius for mid_weighted phase mode.")
+    p.add_argument("--phase_mid_high", type=float, default=0.65,
+                   help="Upper normalized radius for mid_weighted phase mode.")
     p.add_argument("--d_model", type=int, default=512)
     p.add_argument("--n_heads", type=int, default=4)
 

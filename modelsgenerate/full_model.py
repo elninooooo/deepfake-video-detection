@@ -29,6 +29,10 @@ class ModelConfig:
     phase_residual: bool = False
     mask_ratio: float = 0.5
     mask_radius_ratio: float = 0.5
+    phase_mode: str = "raw"
+    phase_confidence_quantile: float = 0.95
+    phase_mid_low: float = 0.15
+    phase_mid_high: float = 0.65
     d_model: int = 512
     n_heads: int = 4
     max_len: int = 32       # supports N up to 32 frames
@@ -70,6 +74,10 @@ class PhaseTransformerDetector(nn.Module):
                 mask_ratio=mask_ratio,
                 mask_radius_ratio=cfg.mask_radius_ratio,
                 train_only_mask=True,
+                phase_mode=cfg.phase_mode,
+                phase_confidence_quantile=cfg.phase_confidence_quantile,
+                phase_mid_low=cfg.phase_mid_low,
+                phase_mid_high=cfg.phase_mid_high,
             )
             # Phase branch output channels = 2 * input RGB = 6. In phase-residual
             # variants, the temporal residual keeps the same channel count.
@@ -129,6 +137,10 @@ def build_model_from_args(args) -> PhaseTransformerDetector:
         **flags,
         mask_ratio=args.mask_ratio,
         mask_radius_ratio=args.mask_radius_ratio,
+        phase_mode=args.phase_mode,
+        phase_confidence_quantile=args.phase_confidence_quantile,
+        phase_mid_low=args.phase_mid_low,
+        phase_mid_high=args.phase_mid_high,
         d_model=args.d_model,
         n_heads=args.n_heads,
         max_len=max(args.n_frames + 1, 32),
