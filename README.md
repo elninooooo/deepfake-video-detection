@@ -284,6 +284,63 @@ All tests should pass on CPU and run in < 1 minute. They cover:
 - Full model — all four variants forward-pass at small resolution.
 - Metrics — perfect/random smoke checks.
 
+### V7 real-only TIM anomaly experiments
+
+V7 uses only real clips for training and scores test clips by TIM
+reconstruction or prediction error. Higher error is treated as more fake-like.
+
+V7a reconstructs all TIM maps:
+
+```bash
+python train_v7_real_tim.py \
+    --variant v7a \
+    --face_cache face_cache_s2_all \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --val_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 \
+    --batch_size 2 \
+    --epochs 30 \
+    --name v7a_tim_recon_real_s2_mixed \
+    --device cuda
+
+python eval_v7_real_tim.py \
+    --ckpt checkpoints/v7a_tim_recon_real_s2_mixed/best.pth \
+    --variant v7a \
+    --face_cache face_cache_s2_all \
+    --train_crf mixed \
+    --crfs crf_src crf0 crf23 crf40 \
+    --include_mixed \
+    --n_frames 16 \
+    --batch_size 2 \
+    --out_dir results/v7a_tim_recon_real_s2_mixed
+```
+
+V7b predicts the final TIM map from previous TIM maps:
+
+```bash
+python train_v7_real_tim.py \
+    --variant v7b \
+    --face_cache face_cache_s2_all \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --val_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 \
+    --batch_size 2 \
+    --epochs 30 \
+    --name v7b_tim_predict_real_s2_mixed \
+    --device cuda
+
+python eval_v7_real_tim.py \
+    --ckpt checkpoints/v7b_tim_predict_real_s2_mixed/best.pth \
+    --variant v7b \
+    --face_cache face_cache_s2_all \
+    --train_crf mixed \
+    --crfs crf_src crf0 crf23 crf40 \
+    --include_mixed \
+    --n_frames 16 \
+    --batch_size 2 \
+    --out_dir results/v7b_tim_predict_real_s2_mixed
+```
+
 ## Mapping back to the methodology RQs
 
 | Research question | Compare these variants |
