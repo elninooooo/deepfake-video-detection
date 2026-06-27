@@ -7,6 +7,7 @@ Variants used in the experimental matrix:
     V4 TIM + Phase + HF      : RGB residual + masked phase map, late fusion
     V5 Phase-Residual        : phase map -> temporal residual
     V6 Phase-Residual + HF   : masked phase map -> temporal residual
+    V8 TIM + Spectral Rel.   : RGB residual + TIM spectral relationship features
 """
 
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ import torch.nn as nn
 from .fusion_head import FusionHead
 from .phase_branch import PhaseBranch
 from .spatial_backbone import SpatialBackbone
+from .tim_spectral_relation import TIMSpectralRelationBranch
 from .tim_extractor import TIMExtractor
 
 
@@ -33,11 +35,15 @@ class ModelConfig:
     phase_confidence_quantile: float = 0.95
     phase_mid_low: float = 0.15
     phase_mid_high: float = 0.65
+    use_tim_spectral_relation: bool = False
+    spectral_relation_dim: int = 128
     d_model: int = 512
     n_heads: int = 4
     max_len: int = 32       # supports N up to 32 frames
 
     def variant_name(self) -> str:
+        if self.use_tim_spectral_relation:
+            return "v8_tim_spectral_relation"
         for name, flags in {
             "v1_tim": (True, False, False, False),
             "v2_phase": (False, True, False, False),
@@ -67,6 +73,14 @@ class PhaseTransformerDetector(nn.Module):
             self.tim_extract = TIMExtractor()
             self.tim_backbone = SpatialBackbone(in_channels=3)
             branch_dims.append(self.tim_backbone.out_dim)
+            if cfg.use_tim_spectral_relation:
+                self.tim_spectral_relation = TIMSpectralRelationBranch(
+                    out_dim=cfg.spectral_relation_dim,
+                    mid_low=cfg.phase_mid_low,
+                    mid_high=cfg.phase_mid_high,
+                    confidence_quantile=cfg.phase_confidence_quantile,
+                )
+                branch_dims.append(cfg.spectral_relation_dim)
 
         if cfg.use_phase:
             mask_ratio = cfg.mask_ratio if cfg.use_mask else 0.0
@@ -112,6 +126,8 @@ class PhaseTransformerDetector(nn.Module):
         if self.cfg.use_tim:
             tim_clip = self.tim_extract(x)                  # (B, N-1, 3, H, W)
             branch_feats.append(self._run_backbone(self.tim_backbone, tim_clip))
+            if self.cfg.use_tim_spectral_relation:
+                branch_feats.append(self.tim_spectral_relation(tim_clip))
 
         if self.cfg.use_phase:
             phase_clip = self.phase_extract(x)              # (B, N, 6, H, W)
@@ -131,6 +147,8 @@ def build_model_from_args(args) -> PhaseTransformerDetector:
         "v4": dict(use_tim=True,  use_phase=True,  use_mask=True,  phase_residual=False),
         "v5": dict(use_tim=False, use_phase=True,  use_mask=False, phase_residual=True),
         "v6": dict(use_tim=False, use_phase=True,  use_mask=True,  phase_residual=True),
+        "v8": dict(use_tim=True,  use_phase=False, use_mask=False, phase_residual=False,
+                   use_tim_spectral_relation=True),
     }
     flags = variant_map[args.variant]
     cfg = ModelConfig(

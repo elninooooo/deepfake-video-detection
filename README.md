@@ -284,6 +284,64 @@ All tests should pass on CPU and run in < 1 minute. They cover:
 - Full model — all four variants forward-pass at small resolution.
 - Metrics — perfect/random smoke checks.
 
+### V8 TIM spectral relationship fusion
+
+V8 keeps TIM as the main branch and adds a compact TIM spectral relationship
+branch. The auxiliary branch computes low/mid/high frequency relationships and
+confidence-weighted mid-band phase statistics from TIM maps, then fuses them
+late with TIM features.
+
+```bash
+python train.py \
+    --variant v8 \
+    --face_cache face_cache_s2_all \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --val_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 \
+    --phase_confidence_quantile 0.95 \
+    --phase_mid_low 0.10 \
+    --phase_mid_high 0.70 \
+    --batch_size 2 \
+    --epochs 50 \
+    --name v8_tim_spectral_relation_s2_mixed \
+    --device cuda
+
+python eval_cross_compression.py \
+    --ckpt checkpoints/v8_tim_spectral_relation_s2_mixed/best.pth \
+    --variant v8 \
+    --face_cache face_cache_s2_all \
+    --train_crf mixed \
+    --crfs crf_src crf0 crf23 crf40 \
+    --include_mixed \
+    --n_frames 16 \
+    --phase_confidence_quantile 0.95 \
+    --phase_mid_low 0.10 \
+    --phase_mid_high 0.70 \
+    --batch_size 2 \
+    --out_dir results/v8_tim_spectral_relation_cross
+```
+
+For calibrated-threshold evaluation:
+
+```bash
+python eval_threshold_calibration.py \
+    --ckpt checkpoints/v8_tim_spectral_relation_s2_mixed/best.pth \
+    --variant v8 \
+    --face_cache face_cache_s2_all \
+    --train_crf mixed \
+    --crfs crf_src crf0 crf23 crf40 \
+    --include_mixed \
+    --threshold_scope mixed \
+    --threshold_method balanced_acc \
+    --n_frames 16 \
+    --phase_confidence_quantile 0.95 \
+    --phase_mid_low 0.10 \
+    --phase_mid_high 0.70 \
+    --batch_size 2 \
+    --device cuda \
+    --out_dir results/v8_tim_spectral_relation_threshold
+```
+
 ### V7 real-only TIM anomaly experiments
 
 V7 uses only real clips for training and scores test clips by TIM

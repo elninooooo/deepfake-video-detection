@@ -65,10 +65,6 @@ def keep_real_only(dataset):
         if not dataset.records:
             raise RuntimeError(f"No real clips left for split={dataset.crf_tag}.")
         return dataset
-    if isinstance(dataset, ConcatDataset):
-        for child in dataset.datasets:
-            keep_real_only(child)
-        return dataset
     raise TypeError(f"Unsupported dataset type: {type(dataset).__name__}")
 
 
@@ -84,8 +80,9 @@ def build_split_dataset(args, crfs, split: str, train: bool, real_only: bool):
         )
         for crf in crfs
     ]
-    dataset = datasets[0] if len(datasets) == 1 else ConcatDataset(datasets)
-    return keep_real_only(dataset) if real_only else dataset
+    if real_only:
+        datasets = [keep_real_only(dataset) for dataset in datasets]
+    return datasets[0] if len(datasets) == 1 else ConcatDataset(datasets)
 
 
 def collate_drop_meta(batch):

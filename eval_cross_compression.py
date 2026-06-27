@@ -71,7 +71,8 @@ def eval_on_crfs(model, args, crfs, split, device, desc):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--ckpt", required=True)
-    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4", "v5", "v6"], required=True)
+    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4", "v5", "v6", "v8"],
+                   required=True)
     p.add_argument("--splits", default="splits.json")
     p.add_argument("--face_cache", default="face_cache")
     p.add_argument("--train_crf", required=True,
@@ -88,8 +89,8 @@ def main():
     p.add_argument("--phase_mode", choices=["raw", "weighted", "mid_weighted"],
                    default="raw")
     p.add_argument("--phase_confidence_quantile", type=float, default=0.95)
-    p.add_argument("--phase_mid_low", type=float, default=0.15)
-    p.add_argument("--phase_mid_high", type=float, default=0.65)
+    p.add_argument("--phase_mid_low", type=float, default=0.10)
+    p.add_argument("--phase_mid_high", type=float, default=0.70)
     p.add_argument("--d_model", type=int, default=512)
     p.add_argument("--n_heads", type=int, default=4)
     p.add_argument("--out_dir", default="results")

@@ -13,6 +13,8 @@ def _build(variant):
         "v4": dict(use_tim=True,  use_phase=True,  use_mask=True,  phase_residual=False),
         "v5": dict(use_tim=False, use_phase=True,  use_mask=False, phase_residual=True),
         "v6": dict(use_tim=False, use_phase=True,  use_mask=True,  phase_residual=True),
+        "v8": dict(use_tim=True,  use_phase=False, use_mask=False, phase_residual=False,
+                   use_tim_spectral_relation=True),
     }[variant]
     return PhaseTransformerDetector(ModelConfig(**flags, max_len=16))
 
@@ -66,3 +68,10 @@ def test_v6_phase_residual_mask_forward():
     y_eval = m(x)
     assert y_train.shape == (2, 1)
     assert y_eval.shape == (2, 1)
+
+
+def test_v8_tim_spectral_relation_forward():
+    m = _build("v8")
+    x = torch.rand(1, 8, 3, 64, 64)
+    y = m(x)
+    assert y.shape == (1, 1)
