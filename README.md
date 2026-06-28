@@ -342,6 +342,45 @@ python eval_threshold_calibration.py \
     --out_dir results/v8_tim_spectral_relation_threshold
 ```
 
+### V10 residual spectral deep relationship
+
+V10 trains a shared residual frequency-view encoder from scratch. It builds
+temporal residuals, splits them into original/low/mid/high views, extracts
+deep features with the shared encoder, and classifies the temporal sequence of
+frequency-view relationships.
+
+```bash
+python train.py \
+    --variant v10 \
+    --face_cache face_cache_s2_all \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --val_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 \
+    --residual_mode gradient \
+    --phase_mid_low 0.10 \
+    --phase_mid_high 0.70 \
+    --spectral_relation_dim 128 \
+    --residual_encoder_dim 256 \
+    --batch_size 2 \
+    --epochs 50 \
+    --name v10_residual_spectral_relation_s2_mixed \
+    --device cuda
+
+python eval_cross_compression.py \
+    --ckpt checkpoints/v10_residual_spectral_relation_s2_mixed/best.pth \
+    --variant v10 \
+    --face_cache face_cache_s2_all \
+    --train_crf mixed \
+    --crfs crf_src crf0 crf23 crf40 \
+    --include_mixed \
+    --n_frames 16 \
+    --residual_mode gradient \
+    --phase_mid_low 0.10 \
+    --phase_mid_high 0.70 \
+    --batch_size 2 \
+    --out_dir results/v10_residual_spectral_relation_cross
+```
+
 ### V7 real-only TIM anomaly experiments
 
 V7 uses only real clips for training and scores test clips by TIM

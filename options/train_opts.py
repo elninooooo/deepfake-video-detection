@@ -20,7 +20,7 @@ def add_common_args(p: argparse.ArgumentParser):
     p.add_argument("--n_frames", type=int, default=16)
 
     # model
-    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4", "v5", "v6", "v8"],
+    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4", "v5", "v6", "v8", "v10"],
                    default="v1")
     p.add_argument("--mask_ratio", type=float, default=0.5)
     p.add_argument("--mask_radius_ratio", type=float, default=0.5)
@@ -33,6 +33,13 @@ def add_common_args(p: argparse.ArgumentParser):
                    help="Lower normalized radius for mid_weighted phase mode.")
     p.add_argument("--phase_mid_high", type=float, default=0.70,
                    help="Upper normalized radius for mid_weighted phase mode.")
+    p.add_argument("--spectral_relation_dim", type=int, default=128,
+                   help="Output dimension for spectral relationship branches.")
+    p.add_argument("--residual_encoder_dim", type=int, default=256,
+                   help="Shared residual frequency-view encoder dimension for v10.")
+    p.add_argument("--residual_mode", choices=["abs", "signed", "gradient"],
+                   default="gradient",
+                   help="Residual input used by v10.")
     p.add_argument("--d_model", type=int, default=512)
     p.add_argument("--n_heads", type=int, default=4)
 

@@ -8,6 +8,7 @@ Variants used in the experimental matrix:
     V5 Phase-Residual        : phase map -> temporal residual
     V6 Phase-Residual + HF   : masked phase map -> temporal residual
     V8 TIM + Spectral Rel.   : RGB residual + TIM spectral relationship features
+    V10 Residual Spectral Rel.: trainable residual frequency-view deep relation
 """
 
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ import torch.nn as nn
 
 from .fusion_head import FusionHead
 from .phase_branch import PhaseBranch
+from .residual_spectral_relation import ResidualSpectralRelationBranch
 from .spatial_backbone import SpatialBackbone
 from .tim_spectral_relation import TIMSpectralRelationBranch
 from .tim_extractor import TIMExtractor
@@ -36,7 +38,10 @@ class ModelConfig:
     phase_mid_low: float = 0.15
     phase_mid_high: float = 0.65
     use_tim_spectral_relation: bool = False
+    use_residual_spectral_relation: bool = False
     spectral_relation_dim: int = 128
+    residual_encoder_dim: int = 256
+    residual_mode: str = "gradient"
     d_model: int = 512
     n_heads: int = 4
     max_len: int = 32       # supports N up to 32 frames
@@ -44,6 +49,8 @@ class ModelConfig:
     def variant_name(self) -> str:
         if self.use_tim_spectral_relation:
             return "v8_tim_spectral_relation"
+        if self.use_residual_spectral_relation:
+            return "v10_residual_spectral_relation"
         for name, flags in {
             "v1_tim": (True, False, False, False),
             "v2_phase": (False, True, False, False),
@@ -64,8 +71,10 @@ class PhaseTransformerDetector(nn.Module):
 
         if cfg.phase_residual and not cfg.use_phase:
             raise ValueError("phase_residual=True requires use_phase=True.")
-        if not (cfg.use_tim or cfg.use_phase):
-            raise ValueError("At least one of use_tim / use_phase must be True.")
+        if not (cfg.use_tim or cfg.use_phase or cfg.use_residual_spectral_relation):
+            raise ValueError(
+                "At least one branch must be enabled: TIM, phase, or residual spectral relation."
+            )
 
         branch_dims = []
 
@@ -97,6 +106,16 @@ class PhaseTransformerDetector(nn.Module):
             # variants, the temporal residual keeps the same channel count.
             self.phase_backbone = SpatialBackbone(in_channels=6)
             branch_dims.append(self.phase_backbone.out_dim)
+
+        if cfg.use_residual_spectral_relation:
+            self.residual_spectral_relation = ResidualSpectralRelationBranch(
+                out_dim=cfg.spectral_relation_dim,
+                encoder_dim=cfg.residual_encoder_dim,
+                mid_low=cfg.phase_mid_low,
+                mid_high=cfg.phase_mid_high,
+                residual_mode=cfg.residual_mode,
+            )
+            branch_dims.append(cfg.spectral_relation_dim)
 
         self.head = FusionHead(
             branch_dims=branch_dims,
@@ -135,6 +154,9 @@ class PhaseTransformerDetector(nn.Module):
                 phase_clip = (phase_clip[:, 1:] - phase_clip[:, :-1]).abs()
             branch_feats.append(self._run_backbone(self.phase_backbone, phase_clip))
 
+        if self.cfg.use_residual_spectral_relation:
+            branch_feats.append(self.residual_spectral_relation(x))
+
         return self.head(branch_feats)
 
 
@@ -149,6 +171,8 @@ def build_model_from_args(args) -> PhaseTransformerDetector:
         "v6": dict(use_tim=False, use_phase=True,  use_mask=True,  phase_residual=True),
         "v8": dict(use_tim=True,  use_phase=False, use_mask=False, phase_residual=False,
                    use_tim_spectral_relation=True),
+        "v10": dict(use_tim=False, use_phase=False, use_mask=False, phase_residual=False,
+                    use_residual_spectral_relation=True),
     }
     flags = variant_map[args.variant]
     cfg = ModelConfig(
@@ -159,6 +183,9 @@ def build_model_from_args(args) -> PhaseTransformerDetector:
         phase_confidence_quantile=args.phase_confidence_quantile,
         phase_mid_low=args.phase_mid_low,
         phase_mid_high=args.phase_mid_high,
+        spectral_relation_dim=args.spectral_relation_dim,
+        residual_encoder_dim=args.residual_encoder_dim,
+        residual_mode=args.residual_mode,
         d_model=args.d_model,
         n_heads=args.n_heads,
         max_len=max(args.n_frames + 1, 32),
