@@ -25,6 +25,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.covariance import LedoitWolf
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import ConcatDataset, DataLoader, Subset
 from tqdm import tqdm
@@ -50,6 +52,11 @@ def parse_args():
     p.add_argument("--mid_high", type=float, default=0.70)
     p.add_argument("--resnet", choices=["resnet18", "resnet50"], default="resnet18")
     p.add_argument("--weights", choices=["imagenet", "none"], default="imagenet")
+    p.add_argument("--probe_mode", choices=["oneclass", "supervised"], default="oneclass",
+                   help="oneclass fits only real samples; supervised fits real/fake labels.")
+    p.add_argument("--layers", nargs="+", type=int, default=[1, 2, 3, 4],
+                   choices=[1, 2, 3, 4],
+                   help="ResNet layers used for relation features.")
     p.add_argument("--torch_home", default=".cache/torch",
                    help="Torch model cache directory for pretrained ResNet weights.")
     p.add_argument("--max_train_per_crf", type=int, default=160)
@@ -248,10 +255,13 @@ def extract_relation_features(x: torch.Tensor, encoder: MultiLayerResNet, args):
     views = split_frequency_views(residual, args.mid_low, args.mid_high)
     inputs = torch.cat([normalize_for_resnet(view) for view in views], dim=0)
     layer_feats = encoder(inputs)
+    selected = {layer - 1 for layer in args.layers}
 
     relation_blocks = []
     pairs = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
-    for feats in layer_feats:
+    for layer_idx, feats in enumerate(layer_feats):
+        if layer_idx not in selected:
+            continue
         pooled = F.adaptive_avg_pool2d(feats, (1, 1)).flatten(1)
         view_feats = pooled.chunk(4, dim=0)
         sims = []
@@ -296,6 +306,19 @@ def score_real_model(x: np.ndarray, scaler: StandardScaler, cov: LedoitWolf):
     return cov.mahalanobis(x_scaled)
 
 
+def fit_supervised_model(x_train: np.ndarray, y_train: np.ndarray, seed: int):
+    clf = make_pipeline(
+        StandardScaler(),
+        LogisticRegression(max_iter=2000, class_weight="balanced", random_state=seed),
+    )
+    clf.fit(x_train, y_train)
+    return clf
+
+
+def score_supervised_model(x: np.ndarray, clf):
+    return clf.predict_proba(x)[:, 1]
+
+
 def report_row(name: str, y_true, y_score):
     report = evaluate(y_true, y_score)
     eer, threshold = compute_eer(np.asarray(y_true), np.asarray(y_score))
@@ -315,7 +338,8 @@ def report_row(name: str, y_true, y_score):
 def write_outputs(rows, args, feature_dim: int, n_train: int):
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{args.resnet}_{args.residual_mode}_multilayer_relation_oneclass"
+    layer_tag = "l" + "".join(str(layer) for layer in args.layers)
+    stem = f"{args.resnet}_{args.residual_mode}_{layer_tag}_relation_{args.probe_mode}"
     csv_path = out_dir / f"{stem}.csv"
     json_path = out_dir / f"{stem}.json"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -323,7 +347,7 @@ def write_outputs(rows, args, feature_dim: int, n_train: int):
         writer.writeheader()
         writer.writerows(rows)
     with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(vars(args) | {"feature_dim": feature_dim, "n_train_real": n_train}, f, indent=2)
+        json.dump(vars(args) | {"feature_dim": feature_dim, "n_train": n_train}, f, indent=2)
     print(f"Wrote {csv_path}")
     print(f"Wrote {json_path}")
 
@@ -335,32 +359,39 @@ def main():
     os.environ.setdefault("TORCH_HOME", str(Path(args.torch_home).resolve()))
     encoder = MultiLayerResNet(args.resnet, args.weights).to(device).eval()
 
-    train_set = build_dataset(args, args.train_crfs, "train", real_only=True, max_per_crf=0)
-    if args.max_train_per_crf > 0:
-        # Apply an overall cap after real-only filtering to keep the probe fast.
+    if args.probe_mode == "oneclass":
         train_set = build_dataset(args, args.train_crfs, "train", real_only=True, max_per_crf=0)
-        if isinstance(train_set, ConcatDataset):
-            capped = []
-            for i, ds in enumerate(train_set.datasets):
-                capped.append(balanced_subset(ds, args.max_train_per_crf, args.seed + i))
-            train_set = ConcatDataset(capped)
-        else:
-            train_set = balanced_subset(train_set, args.max_train_per_crf, args.seed)
-
-    x_real, _ = collect_features(args, train_set, encoder, device, "train real relations")
-    scaler, cov = fit_real_model(x_real)
+        if args.max_train_per_crf > 0:
+            if isinstance(train_set, ConcatDataset):
+                capped = []
+                for i, ds in enumerate(train_set.datasets):
+                    capped.append(balanced_subset(ds, args.max_train_per_crf, args.seed + i))
+                train_set = ConcatDataset(capped)
+            else:
+                train_set = balanced_subset(train_set, args.max_train_per_crf, args.seed)
+        x_train, _ = collect_features(args, train_set, encoder, device, "train real relations")
+        scorer = fit_real_model(x_train)
+    else:
+        train_set = build_dataset(
+            args, args.train_crfs, "train", real_only=False, max_per_crf=args.max_train_per_crf
+        )
+        x_train, y_train = collect_features(args, train_set, encoder, device, "train supervised relations")
+        scorer = fit_supervised_model(x_train, y_train, args.seed)
 
     rows = []
     all_scores, all_labels = [], []
     for crf in args.test_crfs:
         test_set = build_dataset(args, [crf], "test", real_only=False, max_per_crf=args.max_test_per_crf)
         x_test, y_test = collect_features(args, test_set, encoder, device, crf)
-        scores = score_real_model(x_test, scaler, cov)
+        if args.probe_mode == "oneclass":
+            scores = score_real_model(x_test, *scorer)
+        else:
+            scores = score_supervised_model(x_test, scorer)
         rows.append(report_row(crf, y_test, scores))
         all_scores.append(scores)
         all_labels.append(y_test)
     rows.append(report_row("mixed", np.concatenate(all_labels), np.concatenate(all_scores)))
-    write_outputs(rows, args, feature_dim=x_real.shape[1], n_train=len(x_real))
+    write_outputs(rows, args, feature_dim=x_train.shape[1], n_train=len(x_train))
 
     for row in rows:
         print(
