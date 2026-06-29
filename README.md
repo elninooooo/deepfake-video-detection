@@ -381,6 +381,39 @@ python eval_cross_compression.py \
     --out_dir results/v10_residual_spectral_relation_cross
 ```
 
+### V10 frame-level spatial overfit probe
+
+This probe removes the temporal transformer and trains only the spatial
+residual spectral relationship encoder on one adjacent frame pair. Use it to
+check whether the custom encoder can overfit small balanced real/fake subsets
+before spending time on full video-level training.
+
+Start with 32 samples:
+
+```bash
+python train_v10_frame_probe.py \
+    --face_cache face_cache_s2_all \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --val_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 \
+    --residual_mode gradient \
+    --phase_mid_low 0.10 \
+    --phase_mid_high 0.70 \
+    --max_train_samples 32 \
+    --max_val_samples 128 \
+    --eval_all_pairs \
+    --batch_size 8 \
+    --epochs 300 \
+    --lr 1e-3 \
+    --name v10_frame_overfit32_gradient \
+    --device cuda
+```
+
+Then repeat with `--max_train_samples 128` and `512`. For this sanity check,
+the key metric is train AUC/ACC: if 32 samples cannot approach perfect training
+scores, the spatial encoder itself is likely not learning the residual
+frequency relationship cleanly.
+
 ### V7 real-only TIM anomaly experiments
 
 V7 uses only real clips for training and scores test clips by TIM
