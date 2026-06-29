@@ -414,6 +414,45 @@ the key metric is train AUC/ACC: if 32 samples cannot approach perfect training
 scores, the spatial encoder itself is likely not learning the residual
 frequency relationship cleanly.
 
+### V10 frame-level supervised spatial classifier
+
+This is the formal spatial-only experiment. It still removes the temporal
+transformer, but unlike the overfit probe it trains on the full supervised
+real/fake train split and evaluates whether adjacent-frame residual spectral
+relationships generalize by themselves.
+
+```bash
+python train_v10_frame_supervised.py \
+    --face_cache face_cache_s2_all \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --val_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 \
+    --residual_mode gradient \
+    --phase_mid_low 0.10 \
+    --phase_mid_high 0.70 \
+    --eval_pair_mode all \
+    --batch_size 8 \
+    --epochs 80 \
+    --lr 3e-4 \
+    --name v10_frame_supervised_s2_mixed \
+    --device cuda
+```
+
+Evaluate it across compression levels:
+
+```bash
+python eval_v10_frame_supervised.py \
+    --ckpt checkpoints/v10_frame_supervised_s2_mixed/best.pth \
+    --train_crf mixed \
+    --crfs crf_src crf0 crf23 crf40 \
+    --include_mixed \
+    --split test \
+    --eval_pair_mode all \
+    --batch_size 8 \
+    --device cuda \
+    --out_dir results/v10_frame_supervised_cross
+```
+
 ### V7 real-only TIM anomaly experiments
 
 V7 uses only real clips for training and scores test clips by TIM
