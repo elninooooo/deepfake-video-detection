@@ -181,6 +181,12 @@ def main():
     p.add_argument("--residual_encoder_dim", type=int, default=256)
     p.add_argument("--residual_mode", choices=["abs", "signed", "gradient"],
                    default="gradient")
+    p.add_argument("--relation_mode",
+                   choices=[
+                       "abs_cos", "abs_dist", "abs_only", "concat_views", "cos_dist",
+                       "cos_only", "dist_only", "feat_only", "full", "no_original",
+                   ],
+                   default="full")
     p.add_argument("--d_model", type=int, default=512)
     p.add_argument("--n_heads", type=int, default=4)
     p.add_argument("--device", default="cuda", choices=["cuda", "cpu"])

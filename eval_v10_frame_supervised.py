@@ -16,6 +16,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from data_pipeline.video_clip_dataset import CelebDFClipDataset
+from modelsgenerate.residual_spectral_relation import RELATION_MODES
 from train_v10_frame_supervised import V10FrameClassifier, collate_drop_meta
 from utils.metrics import evaluate
 
@@ -45,11 +46,13 @@ def aggregate_pair_scores(pair_scores: torch.Tensor, mode: str, mean_max_alpha: 
 
 def build_args_from_checkpoint(cli_args, ckpt_args):
     merged = dict(ckpt_args or {})
+    merged.setdefault("relation_mode", "full")
     for key in [
         "splits",
         "face_cache",
         "n_frames",
         "residual_mode",
+        "relation_mode",
         "phase_mid_low",
         "phase_mid_high",
         "spectral_relation_dim",
@@ -122,6 +125,7 @@ def main():
     p.add_argument("--split", default="test", choices=["train", "val", "test"])
     p.add_argument("--n_frames", type=int, default=None)
     p.add_argument("--residual_mode", choices=["abs", "signed", "gradient"], default=None)
+    p.add_argument("--relation_mode", choices=sorted(RELATION_MODES), default=None)
     p.add_argument("--phase_mid_low", type=float, default=None)
     p.add_argument("--phase_mid_high", type=float, default=None)
     p.add_argument("--spectral_relation_dim", type=int, default=None)

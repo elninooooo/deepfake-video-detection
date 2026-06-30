@@ -22,7 +22,10 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from data_pipeline.video_clip_dataset import CelebDFClipDataset
-from modelsgenerate.residual_spectral_relation import ResidualSpectralRelationBranch
+from modelsgenerate.residual_spectral_relation import (
+    RELATION_MODES,
+    ResidualSpectralRelationBranch,
+)
 from utils.metrics import evaluate
 from utils.seed import set_seed
 
@@ -35,6 +38,8 @@ def parse_args():
     p.add_argument("--val_crfs", nargs="+", default=None)
     p.add_argument("--n_frames", type=int, default=16)
     p.add_argument("--residual_mode", choices=["abs", "signed", "gradient"], default="gradient")
+    p.add_argument("--relation_mode", choices=sorted(RELATION_MODES), default="full",
+                   help="Which deep frequency relationship representation to train.")
     p.add_argument("--phase_mid_low", type=float, default=0.10)
     p.add_argument("--phase_mid_high", type=float, default=0.70)
     p.add_argument("--spectral_relation_dim", type=int, default=128)
@@ -147,6 +152,7 @@ class V10FrameClassifier(nn.Module):
             mid_low=args.phase_mid_low,
             mid_high=args.phase_mid_high,
             residual_mode=args.residual_mode,
+            relation_mode=args.relation_mode,
             dropout=0.1,
         )
         self.classifier = nn.Sequential(
@@ -201,6 +207,7 @@ def main():
     print(f"train crfs: {args.train_crfs}  val crfs: {val_crfs}")
     print(f"train clips: {len(train_set)}  val clips: {len(val_set)}")
     print(f"train labels: real={train_labels.count(0)} fake={train_labels.count(1)}")
+    print(f"relation mode: {args.relation_mode}")
     print(f"validation pair mode: {args.eval_pair_mode}")
 
     train_loader = DataLoader(

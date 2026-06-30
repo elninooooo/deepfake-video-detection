@@ -42,6 +42,7 @@ class ModelConfig:
     spectral_relation_dim: int = 128
     residual_encoder_dim: int = 256
     residual_mode: str = "gradient"
+    relation_mode: str = "full"
     d_model: int = 512
     n_heads: int = 4
     max_len: int = 32       # supports N up to 32 frames
@@ -114,6 +115,7 @@ class PhaseTransformerDetector(nn.Module):
                 mid_low=cfg.phase_mid_low,
                 mid_high=cfg.phase_mid_high,
                 residual_mode=cfg.residual_mode,
+                relation_mode=cfg.relation_mode,
             )
             branch_dims.append(cfg.spectral_relation_dim)
 
@@ -186,6 +188,7 @@ def build_model_from_args(args) -> PhaseTransformerDetector:
         spectral_relation_dim=args.spectral_relation_dim,
         residual_encoder_dim=args.residual_encoder_dim,
         residual_mode=args.residual_mode,
+        relation_mode=args.relation_mode,
         d_model=args.d_model,
         n_heads=args.n_heads,
         max_len=max(args.n_frames + 1, 32),

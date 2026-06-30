@@ -453,6 +453,66 @@ python eval_v10_frame_supervised.py \
     --out_dir results/v10_frame_supervised_cross
 ```
 
+### V10 frame-level relation ablation
+
+Relation ablation retrains the frame-level supervised model while changing how
+the original/low/mid/high residual features are related. Keep score
+aggregation fixed, usually `--score_agg mean`, so the comparison isolates the
+deep relationship representation.
+
+Available modes:
+
+- `full`: original feature + all pairwise abs differences + cosine + L2.
+- `feat_only`: original residual feature only.
+- `abs_only`: pairwise absolute feature differences only.
+- `cos_only`: pairwise cosine similarities only.
+- `dist_only`: pairwise L2 distances only.
+- `abs_cos`, `abs_dist`, `cos_dist`: two-relation combinations.
+- `no_original`: all pairwise relationships without the original feature.
+- `concat_views`: concatenate original/low/mid/high features without explicit relationships.
+
+Train one mode:
+
+```bash
+python train_v10_frame_supervised.py \
+    --face_cache face_cache_s2_all \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --val_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 \
+    --residual_mode gradient \
+    --relation_mode abs_only \
+    --phase_mid_low 0.10 \
+    --phase_mid_high 0.70 \
+    --eval_pair_mode all \
+    --batch_size 8 \
+    --epochs 80 \
+    --lr 3e-4 \
+    --name v10_frame_relation_abs_only_s2_mixed \
+    --device cuda
+```
+
+Evaluate that mode:
+
+```bash
+python eval_v10_frame_supervised.py \
+    --ckpt checkpoints/v10_frame_relation_abs_only_s2_mixed/best.pth \
+    --train_crf mixed \
+    --crfs crf_src crf0 crf23 crf40 \
+    --include_mixed \
+    --split test \
+    --eval_pair_mode all \
+    --score_agg mean \
+    --batch_size 8 \
+    --device cuda \
+    --out_dir results/v10_frame_relation_ablation/abs_only
+```
+
+Run all relation modes on Windows PowerShell:
+
+```powershell
+.\scripts\run_v10_frame_relation_ablation.ps1 -Epochs 80 -BatchSize 8 -Device cuda
+```
+
 ### V7 real-only TIM anomaly experiments
 
 V7 uses only real clips for training and scores test clips by TIM

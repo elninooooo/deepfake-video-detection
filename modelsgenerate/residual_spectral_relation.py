@@ -8,6 +8,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+RELATION_MODES = {
+    "full",
+    "feat_only",
+    "abs_only",
+    "cos_only",
+    "dist_only",
+    "abs_cos",
+    "abs_dist",
+    "cos_dist",
+    "no_original",
+    "concat_views",
+}
+
+
 def _conv_block(in_channels: int, out_channels: int) -> nn.Sequential:
     return nn.Sequential(
         nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, bias=False),
@@ -75,6 +89,7 @@ class ResidualSpectralRelationBranch(nn.Module):
         mid_low: float = 0.10,
         mid_high: float = 0.70,
         residual_mode: str = "gradient",
+        relation_mode: str = "full",
         dropout: float = 0.1,
     ):
         super().__init__()
@@ -82,12 +97,18 @@ class ResidualSpectralRelationBranch(nn.Module):
             raise ValueError("Expected 0 <= mid_low < mid_high <= 1.")
         if residual_mode not in {"abs", "signed", "gradient"}:
             raise ValueError(f"Unsupported residual_mode: {residual_mode}")
+        if relation_mode not in RELATION_MODES:
+            raise ValueError(
+                f"Unsupported relation_mode: {relation_mode}. "
+                f"Expected one of {sorted(RELATION_MODES)}"
+            )
         self.mid_low = mid_low
         self.mid_high = mid_high
         self.residual_mode = residual_mode
+        self.relation_mode = relation_mode
         self.encoder = ResidualViewEncoder(out_dim=encoder_dim)
         self.pairs = list(combinations(range(4), 2))
-        relation_dim = 2 * len(self.pairs) + encoder_dim * (1 + len(self.pairs))
+        relation_dim = self._relation_dim(encoder_dim)
         self.proj = nn.Sequential(
             nn.LayerNorm(relation_dim),
             nn.Linear(relation_dim, out_dim),
@@ -96,6 +117,30 @@ class ResidualSpectralRelationBranch(nn.Module):
             nn.Linear(out_dim, out_dim),
         )
         self.out_dim = out_dim
+
+    def _relation_dim(self, encoder_dim: int) -> int:
+        n_pairs = len(self.pairs)
+        if self.relation_mode == "full":
+            return encoder_dim * (1 + n_pairs) + 2 * n_pairs
+        if self.relation_mode == "feat_only":
+            return encoder_dim
+        if self.relation_mode == "abs_only":
+            return encoder_dim * n_pairs
+        if self.relation_mode == "cos_only":
+            return n_pairs
+        if self.relation_mode == "dist_only":
+            return n_pairs
+        if self.relation_mode == "abs_cos":
+            return encoder_dim * n_pairs + n_pairs
+        if self.relation_mode == "abs_dist":
+            return encoder_dim * n_pairs + n_pairs
+        if self.relation_mode == "cos_dist":
+            return 2 * n_pairs
+        if self.relation_mode == "no_original":
+            return encoder_dim * n_pairs + 2 * n_pairs
+        if self.relation_mode == "concat_views":
+            return encoder_dim * 4
+        raise AssertionError(f"Unhandled relation_mode: {self.relation_mode}")
 
     def _residual(self, x: torch.Tensor) -> torch.Tensor:
         if self.residual_mode == "abs":
@@ -114,6 +159,32 @@ class ResidualSpectralRelationBranch(nn.Module):
             masked = torch.fft.ifftshift(spec * mask.view(1, 1, h, w), dim=(-2, -1))
             views.append(torch.fft.ifft2(masked, norm="ortho").real)
         return views
+
+    def _relation_features(self, feats):
+        if self.relation_mode == "feat_only":
+            return feats[0]
+        if self.relation_mode == "concat_views":
+            return torch.cat(feats, dim=1)
+
+        abs_parts = []
+        cos_parts = []
+        dist_parts = []
+        for i, j in self.pairs:
+            diff = feats[i] - feats[j]
+            abs_parts.append(diff.abs())
+            cos_parts.append(F.cosine_similarity(feats[i], feats[j], dim=1, eps=1e-8))
+            dist_parts.append(diff.norm(dim=1))
+
+        parts = []
+        if self.relation_mode == "full":
+            parts.append(feats[0])
+        if self.relation_mode in {"full", "abs_only", "abs_cos", "abs_dist", "no_original"}:
+            parts.extend(abs_parts)
+        if self.relation_mode in {"full", "cos_only", "abs_cos", "cos_dist", "no_original"}:
+            parts.append(torch.stack(cos_parts, dim=1))
+        if self.relation_mode in {"full", "dist_only", "abs_dist", "cos_dist", "no_original"}:
+            parts.append(torch.stack(dist_parts, dim=1))
+        return torch.cat(parts, dim=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -134,14 +205,5 @@ class ResidualSpectralRelationBranch(nn.Module):
         views = self._frequency_views(residual)
         feats = self.encoder(torch.cat(views, dim=0)).chunk(4, dim=0)
 
-        rel_parts = [feats[0]]
-        cos_parts = []
-        dist_parts = []
-        for i, j in self.pairs:
-            rel_parts.append((feats[i] - feats[j]).abs())
-            cos_parts.append(F.cosine_similarity(feats[i], feats[j], dim=1, eps=1e-8))
-            dist_parts.append((feats[i] - feats[j]).norm(dim=1))
-        rel_parts.append(torch.stack(cos_parts, dim=1))
-        rel_parts.append(torch.stack(dist_parts, dim=1))
-        relation = torch.cat(rel_parts, dim=1)
+        relation = self._relation_features(feats)
         return self.proj(relation).view(b, t, self.out_dim)

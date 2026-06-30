@@ -40,6 +40,13 @@ def add_common_args(p: argparse.ArgumentParser):
     p.add_argument("--residual_mode", choices=["abs", "signed", "gradient"],
                    default="gradient",
                    help="Residual input used by v10.")
+    p.add_argument("--relation_mode",
+                   choices=[
+                       "abs_cos", "abs_dist", "abs_only", "concat_views", "cos_dist",
+                       "cos_only", "dist_only", "feat_only", "full", "no_original",
+                   ],
+                   default="full",
+                   help="Frequency-view relationship representation used by v10.")
     p.add_argument("--d_model", type=int, default=512)
     p.add_argument("--n_heads", type=int, default=4)
 
