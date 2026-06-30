@@ -20,6 +20,29 @@ from train_v10_frame_supervised import V10FrameClassifier, collate_drop_meta
 from utils.metrics import evaluate
 
 
+def aggregate_pair_scores(pair_scores: torch.Tensor, mode: str, mean_max_alpha: float):
+    """Aggregate (B,T) pair fake probabilities into one score per clip."""
+    if mode == "mean":
+        return pair_scores.mean(dim=1)
+    if mode == "max":
+        return pair_scores.max(dim=1).values
+    if mode == "top3_mean":
+        k = min(3, pair_scores.size(1))
+        return pair_scores.topk(k, dim=1).values.mean(dim=1)
+    if mode == "top5_mean":
+        k = min(5, pair_scores.size(1))
+        return pair_scores.topk(k, dim=1).values.mean(dim=1)
+    if mode == "q75":
+        return torch.quantile(pair_scores, 0.75, dim=1)
+    if mode == "q90":
+        return torch.quantile(pair_scores, 0.90, dim=1)
+    if mode == "mean_max":
+        mean = pair_scores.mean(dim=1)
+        max_score = pair_scores.max(dim=1).values
+        return mean_max_alpha * mean + (1.0 - mean_max_alpha) * max_score
+    raise ValueError(f"Unsupported score aggregation mode: {mode}")
+
+
 def build_args_from_checkpoint(cli_args, ckpt_args):
     merged = dict(ckpt_args or {})
     for key in [
@@ -73,7 +96,11 @@ def eval_on_crfs(model, model_args, cli_args, crfs, device, desc):
             for i in range(x.size(1) - 1):
                 logits = model.forward_pair(x[:, i:i + 2])
                 pair_scores.append(torch.sigmoid(logits))
-            score = torch.stack(pair_scores, dim=1).mean(dim=1)
+            score = aggregate_pair_scores(
+                torch.stack(pair_scores, dim=1),
+                cli_args.score_agg,
+                cli_args.mean_max_alpha,
+            )
         else:
             logits = model(x)
             score = torch.sigmoid(logits)
@@ -100,6 +127,12 @@ def main():
     p.add_argument("--spectral_relation_dim", type=int, default=None)
     p.add_argument("--residual_encoder_dim", type=int, default=None)
     p.add_argument("--eval_pair_mode", choices=["center", "all"], default="all")
+    p.add_argument("--score_agg",
+                   choices=["mean", "max", "top3_mean", "top5_mean", "q75", "q90", "mean_max"],
+                   default="mean",
+                   help="How to aggregate adjacent-pair scores when --eval_pair_mode all.")
+    p.add_argument("--mean_max_alpha", type=float, default=0.7,
+                   help="For mean_max: alpha * mean + (1 - alpha) * max.")
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--device", choices=["cuda", "cpu"], default="cuda")
@@ -134,7 +167,8 @@ def main():
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    base = f"v10_frame_supervised_cross_crf_{args.split}_trainedOn_{args.train_crf}"
+    agg_tag = args.score_agg if args.eval_pair_mode == "all" else "center"
+    base = f"v10_frame_supervised_{agg_tag}_cross_crf_{args.split}_trainedOn_{args.train_crf}"
     csv_path = out_dir / f"{base}.csv"
     md_path = out_dir / f"{base}.md"
     df.to_csv(csv_path, index=False)
