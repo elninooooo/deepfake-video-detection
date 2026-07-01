@@ -513,6 +513,45 @@ Run all relation modes on Windows PowerShell:
 .\scripts\run_v10_frame_relation_ablation.ps1 -Epochs 80 -BatchSize 8 -Device cuda
 ```
 
+### V10 frozen-frame CLS temporal aggregator
+
+This experiment keeps the trained frame-level relation branch frozen and only
+trains a lightweight CLS Transformer over the 15 adjacent-pair features. Use it
+to test whether long-range pair interactions add value beyond `mean` or
+`mean_max` score aggregation.
+
+```bash
+python train_v10_frame_cls_aggregator.py \
+    --frame_ckpt checkpoints/v10_frame_relation_cos_only_s2_mixed/best.pth \
+    --face_cache face_cache_s2_all \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --val_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 \
+    --d_model 128 \
+    --n_heads 4 \
+    --num_layers 1 \
+    --dropout 0.1 \
+    --batch_size 8 \
+    --epochs 50 \
+    --lr 3e-4 \
+    --name v10_frame_cos_cls_aggregator_s2_mixed \
+    --device cuda
+```
+
+Evaluate it across compression levels:
+
+```bash
+python eval_v10_frame_cls_aggregator.py \
+    --ckpt checkpoints/v10_frame_cos_cls_aggregator_s2_mixed/best.pth \
+    --train_crf mixed \
+    --crfs crf_src crf0 crf23 crf40 \
+    --include_mixed \
+    --split test \
+    --batch_size 8 \
+    --device cuda \
+    --out_dir results/v10_frame_cos_cls_aggregator_cross
+```
+
 ### V7 real-only TIM anomaly experiments
 
 V7 uses only real clips for training and scores test clips by TIM
