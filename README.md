@@ -552,6 +552,57 @@ python eval_v10_frame_cls_aggregator.py \
     --out_dir results/v10_frame_cos_cls_aggregator_cross
 ```
 
+### V10 relation-wise temporal probes
+
+Use the frozen `cos_only` frame model to inspect the six cosine relations over
+time. The statistics probe trains logistic-regression probes over temporal
+statistics for each relation or relation group.
+
+```bash
+python probe_v10_relation_temporal_stats.py \
+    --frame_ckpt checkpoints/v10_frame_relation_cos_only_s2_mixed/best.pth \
+    --face_cache face_cache_s2_all \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --test_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 \
+    --batch_size 8 \
+    --device cuda \
+    --out_dir results/v10_relation_temporal_stats
+```
+
+Train a lightweight relation-wise attention aggregator over raw 15x6 cosine
+relation sequences:
+
+```bash
+python train_v10_relationwise_attention.py \
+    --frame_ckpt checkpoints/v10_frame_relation_cos_only_s2_mixed/best.pth \
+    --face_cache face_cache_s2_all \
+    --train_crfs crf_src crf0 crf23 crf40 \
+    --val_crfs crf_src crf0 crf23 crf40 \
+    --n_frames 16 \
+    --relation_group all \
+    --hidden_dim 32 \
+    --batch_size 8 \
+    --epochs 50 \
+    --lr 3e-4 \
+    --name v10_relationwise_attention_all_s2_mixed \
+    --device cuda
+```
+
+Evaluate it:
+
+```bash
+python eval_v10_relationwise_attention.py \
+    --ckpt checkpoints/v10_relationwise_attention_all_s2_mixed/best.pth \
+    --train_crf mixed \
+    --crfs crf_src crf0 crf23 crf40 \
+    --include_mixed \
+    --split test \
+    --batch_size 8 \
+    --device cuda \
+    --out_dir results/v10_relationwise_attention_all_cross
+```
+
 ### V7 real-only TIM anomaly experiments
 
 V7 uses only real clips for training and scores test clips by TIM
