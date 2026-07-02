@@ -30,6 +30,10 @@ face_cache_*/
 # Training outputs
 checkpoints/
 results/
+tmp/
+
+# Local artifact generators
+scripts/generate_cos_only_cls_method_pdf.py
 
 # Python cache
 __pycache__/
