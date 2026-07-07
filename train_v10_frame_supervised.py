@@ -54,6 +54,18 @@ def parse_args():
                    help="Optional balanced val subset size. 0 means full val split.")
     p.add_argument("--eval_pair_mode", choices=["center", "all"], default="all",
                    help="Use center pair or average all adjacent pairs during validation.")
+    p.add_argument("--train_pair_mode",
+                   choices=["random_k", "all_independent", "random_k_bag", "all_weighted"],
+                   default="random_k",
+                   help="How adjacent frame pairs are used during training.")
+    p.add_argument("--train_pair_k", type=int, default=1,
+                   help="Number of random adjacent pairs per clip for random_k/random_k_bag.")
+    p.add_argument("--bag_loss_weight", type=float, default=0.5,
+                   help="Weight for unordered bag mean loss in random_k_bag.")
+    p.add_argument("--pair_weight_mode",
+                   choices=["uniform", "residual_energy", "mid_residual_energy"],
+                   default="uniform",
+                   help="Pair reliability weights computed from each pair itself.")
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--epochs", type=int, default=80)
@@ -148,6 +160,83 @@ def select_adjacent_pair(x: torch.Tensor, train: bool):
     return torch.stack([x[batch, idx], x[batch, idx + 1]], dim=1)
 
 
+def build_adjacent_pairs(x: torch.Tensor) -> torch.Tensor:
+    """Return all adjacent pairs as (B, T-1, 2, C, H, W)."""
+    return torch.stack([x[:, :-1], x[:, 1:]], dim=2)
+
+
+def sample_pair_indices(batch_size: int, n_pairs: int, k: int, device: torch.device) -> torch.Tensor:
+    k = min(k, n_pairs)
+    if k <= 0:
+        raise ValueError("--train_pair_k must be positive.")
+    noise = torch.rand(batch_size, n_pairs, device=device)
+    return noise.topk(k, dim=1).indices
+
+
+def gather_pair_subset(all_pairs: torch.Tensor, pair_idx: torch.Tensor) -> torch.Tensor:
+    batch = torch.arange(all_pairs.size(0), device=all_pairs.device).unsqueeze(1)
+    return all_pairs[batch, pair_idx]
+
+
+def pair_reliability_weights(x_pairs: torch.Tensor, mode: str, eps: float = 1e-6) -> torch.Tensor:
+    """Return per-pair weights from pair-local statistics, without temporal positions."""
+    if mode == "uniform":
+        return torch.ones(x_pairs.shape[:2], device=x_pairs.device, dtype=x_pairs.dtype)
+
+    diff = (x_pairs[:, :, 1] - x_pairs[:, :, 0]).abs()
+    energy = diff.flatten(2).mean(dim=2)
+    if mode == "residual_energy":
+        weights = energy / energy.mean(dim=1, keepdim=True).clamp_min(eps)
+    elif mode == "mid_residual_energy":
+        center = energy.median(dim=1, keepdim=True).values
+        spread = (energy - center).abs().median(dim=1, keepdim=True).values.clamp_min(eps)
+        weights = torch.exp(-((energy - center) / (2.0 * spread)).pow(2))
+    else:
+        raise ValueError(f"Unsupported pair weight mode: {mode}")
+    return weights.clamp_min(eps)
+
+
+def flatten_pairs(x_pairs: torch.Tensor) -> torch.Tensor:
+    b, k = x_pairs.shape[:2]
+    return x_pairs.reshape(b * k, *x_pairs.shape[2:])
+
+
+def train_pair_forward(model: nn.Module, x: torch.Tensor, y: torch.Tensor, args, loss_fn):
+    """Compute loss/logits for unordered adjacent-pair training modes."""
+    all_pairs = build_adjacent_pairs(x)
+    b, n_pairs = all_pairs.shape[:2]
+
+    if args.train_pair_mode in ("random_k", "random_k_bag"):
+        pair_idx = sample_pair_indices(b, n_pairs, args.train_pair_k, x.device)
+        x_pairs = gather_pair_subset(all_pairs, pair_idx)
+    elif args.train_pair_mode in ("all_independent", "all_weighted"):
+        x_pairs = all_pairs
+    else:
+        raise ValueError(f"Unsupported train_pair_mode={args.train_pair_mode!r}")
+
+    k = x_pairs.size(1)
+    logits = model.forward_pair(flatten_pairs(x_pairs)).reshape(b, k)
+    pair_targets = y[:, None].expand_as(logits)
+    pair_loss = nn.functional.binary_cross_entropy_with_logits(
+        logits,
+        pair_targets,
+        reduction="none",
+    )
+
+    if args.train_pair_mode == "all_weighted" or args.pair_weight_mode != "uniform":
+        weights = pair_reliability_weights(x_pairs, args.pair_weight_mode)
+        loss = (pair_loss * weights).sum() / weights.sum().clamp_min(1e-6)
+    else:
+        loss = pair_loss.mean()
+
+    if args.train_pair_mode == "random_k_bag":
+        bag_prob = torch.sigmoid(logits).mean(dim=1)
+        bag_loss = loss_fn(torch.logit(bag_prob.clamp(1e-6, 1 - 1e-6)), y)
+        loss = loss + args.bag_loss_weight * bag_loss
+
+    return loss, logits.reshape(-1), pair_targets.reshape(-1)
+
+
 class V10FrameClassifier(nn.Module):
     def __init__(self, args):
         super().__init__()
@@ -214,6 +303,11 @@ def main():
     print(f"train labels: real={train_labels.count(0)} fake={train_labels.count(1)}")
     print(f"relation mode: {args.relation_mode}")
     print(f"sampling mode: {args.sampling_mode}")
+    print(
+        f"train pair mode: {args.train_pair_mode} "
+        f"k={args.train_pair_k} pair_weight={args.pair_weight_mode} "
+        f"bag_loss_weight={args.bag_loss_weight}"
+    )
     print(f"validation pair mode: {args.eval_pair_mode}")
 
     train_loader = DataLoader(
@@ -249,8 +343,7 @@ def main():
         for x, y in pbar:
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
-            logits = model(x)
-            loss = loss_fn(logits, y)
+            loss, logits, targets = train_pair_forward(model, x, y, args, loss_fn)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
@@ -259,7 +352,7 @@ def main():
             loss_sum += float(loss.detach()) * bs
             n_seen += bs
             train_scores.append(torch.sigmoid(logits.detach()).cpu().numpy())
-            train_targets.append(y.detach().cpu().numpy())
+            train_targets.append(targets.detach().cpu().numpy())
             pbar.set_postfix(loss=f"{loss_sum / max(1, n_seen):.4f}")
 
         train_loss = loss_sum / max(1, n_seen)
