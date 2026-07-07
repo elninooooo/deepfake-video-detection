@@ -47,10 +47,12 @@ def aggregate_pair_scores(pair_scores: torch.Tensor, mode: str, mean_max_alpha: 
 def build_args_from_checkpoint(cli_args, ckpt_args):
     merged = dict(ckpt_args or {})
     merged.setdefault("relation_mode", "full")
+    merged.setdefault("sampling_mode", "legacy")
     for key in [
         "splits",
         "face_cache",
         "n_frames",
+        "sampling_mode",
         "residual_mode",
         "relation_mode",
         "phase_mid_low",
@@ -73,6 +75,7 @@ def build_eval_dataset(args, crfs, split):
             split=split,
             n_frames=args.n_frames,
             train=False,
+            sampling_mode=args.sampling_mode,
         )
         for crf in crfs
     ]
@@ -124,6 +127,10 @@ def main():
     p.add_argument("--include_mixed", action="store_true")
     p.add_argument("--split", default="test", choices=["train", "val", "test"])
     p.add_argument("--n_frames", type=int, default=None)
+    p.add_argument("--sampling_mode",
+                   choices=sorted(CelebDFClipDataset.SAMPLING_MODES),
+                   default=None,
+                   help="Override checkpoint temporal sampling protocol.")
     p.add_argument("--residual_mode", choices=["abs", "signed", "gradient"], default=None)
     p.add_argument("--relation_mode", choices=sorted(RELATION_MODES), default=None)
     p.add_argument("--phase_mid_low", type=float, default=None)

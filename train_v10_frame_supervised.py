@@ -37,6 +37,10 @@ def parse_args():
     p.add_argument("--train_crfs", nargs="+", default=["crf_src", "crf0", "crf23", "crf40"])
     p.add_argument("--val_crfs", nargs="+", default=None)
     p.add_argument("--n_frames", type=int, default=16)
+    p.add_argument("--sampling_mode",
+                   choices=sorted(CelebDFClipDataset.SAMPLING_MODES),
+                   default="legacy",
+                   help="Temporal sampling protocol over cached face frames.")
     p.add_argument("--residual_mode", choices=["abs", "signed", "gradient"], default="gradient")
     p.add_argument("--relation_mode", choices=sorted(RELATION_MODES), default="full",
                    help="Which deep frequency relationship representation to train.")
@@ -124,6 +128,7 @@ def build_split_dataset(args, crfs, split: str, train: bool, max_items: int = 0)
             n_frames=args.n_frames,
             train=train,
             horiz_flip=train,
+            sampling_mode=args.sampling_mode,
         )
         for crf in crfs
     ]
@@ -208,6 +213,7 @@ def main():
     print(f"train clips: {len(train_set)}  val clips: {len(val_set)}")
     print(f"train labels: real={train_labels.count(0)} fake={train_labels.count(1)}")
     print(f"relation mode: {args.relation_mode}")
+    print(f"sampling mode: {args.sampling_mode}")
     print(f"validation pair mode: {args.eval_pair_mode}")
 
     train_loader = DataLoader(

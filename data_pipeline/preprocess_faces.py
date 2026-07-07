@@ -13,6 +13,8 @@ Sampling modes:
   * uniform: spread the requested frames over the full video (legacy default)
   * clip: take a centered clip with --frame_stride between source frames,
           for example stride 1/2/4 in TIM continuity experiments
+  * segments: split the full video into --num_segments temporal anchors and
+              take a short contiguous block at each anchor, e.g. 4x4 frames
 
 `--src` can either be:
   * The original Celeb-DF tree (no crf sub-folders)  → produces <out>/crf_src/
@@ -52,7 +54,7 @@ def crf_tag(crf_dir: Path, src_root: Path) -> str:
 
 
 def sample_frame_indices(total: int, n: int, sampling: str = "uniform",
-                         frame_stride: int = 1):
+                         frame_stride: int = 1, num_segments: int = 4):
     """Return source-frame indices for one reproducible video sample."""
     if total <= 0 or n <= 0:
         return []
@@ -66,17 +68,29 @@ def sample_frame_indices(total: int, n: int, sampling: str = "uniform",
             return []
         start = (total - span) // 2
         return [start + i * frame_stride for i in range(n)]
+    if sampling == "segments":
+        if num_segments <= 0 or n % num_segments != 0:
+            return []
+        block = n // num_segments
+        if total < n or total < block:
+            return []
+        max_start = total - block
+        starts = np.linspace(0, max_start, num_segments).round().astype(int).tolist()
+        idxs = []
+        for start in starts:
+            idxs.extend(range(start, start + block))
+        return idxs
     raise ValueError(f"Unknown sampling mode: {sampling}")
 
 
 def extract_video_faces(video_path: Path, n_frames: int, mtcnn: MTCNN, image_size: int,
                         margin: float = 0.3, sampling: str = "uniform",
-                        frame_stride: int = 1):
+                        frame_stride: int = 1, num_segments: int = 4):
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         return []
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    idxs = sample_frame_indices(total, n_frames, sampling, frame_stride)
+    idxs = sample_frame_indices(total, n_frames, sampling, frame_stride, num_segments)
     if not idxs:
         cap.release()
         return []
@@ -125,10 +139,12 @@ def main():
     ap.add_argument("--out", required=True, help="Output face_cache directory")
     ap.add_argument("--num_frames", type=int, default=32,
                     help="Frames sampled per video (must be >= N used for clip).")
-    ap.add_argument("--sampling", choices=["uniform", "clip"], default="uniform",
-                    help="uniform spans the full video; clip extracts a centered temporal clip.")
+    ap.add_argument("--sampling", choices=["uniform", "clip", "segments"], default="uniform",
+                    help="uniform spans the full video; clip extracts a centered temporal clip; segments extracts short blocks across the full video.")
     ap.add_argument("--frame_stride", type=int, default=1,
                     help="Source-frame spacing for --sampling clip (e.g. 1, 2, 4).")
+    ap.add_argument("--num_segments", type=int, default=4,
+                    help="Number of temporal blocks for --sampling segments.")
     ap.add_argument("--image_size", type=int, default=224)
     ap.add_argument("--min_success_ratio", type=float, default=0.5,
                     help="Drop video if fewer than this fraction of frames had a detected face.")
@@ -138,8 +154,10 @@ def main():
     args = ap.parse_args()
     if args.frame_stride < 1:
         ap.error("--frame_stride must be >= 1")
-    if args.sampling == "uniform" and args.frame_stride != 1:
+    if args.sampling != "clip" and args.frame_stride != 1:
         ap.error("--frame_stride only applies when --sampling clip")
+    if args.sampling == "segments" and args.num_frames % args.num_segments != 0:
+        ap.error("--num_frames must be divisible by --num_segments for --sampling segments")
 
     src = Path(args.src).resolve()
     out = Path(args.out).resolve()
@@ -167,7 +185,8 @@ def main():
         index = json.loads(index_path.read_text(encoding="utf-8")) if index_path.is_file() else {}
 
         print(f"\n=== Extracting faces for {tag} ({crf_dir}) "
-              f"sampling={args.sampling} stride={args.frame_stride} ===")
+              f"sampling={args.sampling} stride={args.frame_stride} "
+              f"segments={args.num_segments} ===")
         for rec in tqdm(all_recs):
             rel = rec["path"]
             if rel in index:
@@ -182,6 +201,7 @@ def main():
             crops = extract_video_faces(
                 vid, args.num_frames, mtcnn, args.image_size,
                 sampling=args.sampling, frame_stride=args.frame_stride,
+                num_segments=args.num_segments,
             )
             success_ratio = len(crops) / max(1, args.num_frames)
             if success_ratio < args.min_success_ratio:
