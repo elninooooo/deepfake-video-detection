@@ -55,6 +55,9 @@ tmp/
 # Local artifact generators
 scripts/generate_cos_only_cls_method_pdf.py
 
+# Local experiment runner scripts
+scripts/run_*.ps1
+
 # Python cache
 __pycache__/
 .pytest_cache/

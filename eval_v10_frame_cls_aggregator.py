@@ -30,6 +30,7 @@ def build_eval_dataset(args, crfs, split):
             split=split,
             n_frames=args.n_frames,
             train=False,
+            sampling_mode=args.sampling_mode,
         )
         for crf in crfs
     ]
@@ -69,6 +70,9 @@ def main():
     p.add_argument("--include_mixed", action="store_true")
     p.add_argument("--split", default="test", choices=["train", "val", "test"])
     p.add_argument("--n_frames", type=int, default=None)
+    p.add_argument("--sampling_mode",
+                   choices=sorted(CelebDFClipDataset.SAMPLING_MODES),
+                   default=None)
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--device", choices=["cuda", "cpu"], default="cuda")
@@ -84,6 +88,7 @@ def main():
     eval_args.splits = args.splits or train_args.get("splits", "splits.json")
     eval_args.face_cache = args.face_cache or train_args.get("face_cache", "face_cache_s2_all")
     eval_args.n_frames = args.n_frames or int(train_args.get("n_frames", 16))
+    eval_args.sampling_mode = args.sampling_mode or train_args.get("sampling_mode", "legacy")
     eval_args.split = args.split
     eval_args.batch_size = args.batch_size
     eval_args.num_workers = args.num_workers

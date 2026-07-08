@@ -22,6 +22,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from train_v10_frame_supervised import (
+    CelebDFClipDataset,
     V10FrameClassifier,
     build_split_dataset,
     collate_drop_meta,
@@ -41,6 +42,10 @@ def parse_args():
     p.add_argument("--train_crfs", nargs="+", default=["crf_src", "crf0", "crf23", "crf40"])
     p.add_argument("--val_crfs", nargs="+", default=None)
     p.add_argument("--n_frames", type=int, default=16)
+    p.add_argument("--sampling_mode",
+                   choices=sorted(CelebDFClipDataset.SAMPLING_MODES),
+                   default="legacy",
+                   help="Temporal sampling protocol over cached face frames.")
     p.add_argument("--max_train_samples", type=int, default=0)
     p.add_argument("--max_val_samples", type=int, default=0)
     p.add_argument("--d_model", type=int, default=128)
@@ -65,6 +70,7 @@ def frame_args_from_checkpoint(state, cli_args):
     ckpt_args["splits"] = cli_args.splits
     ckpt_args["face_cache"] = cli_args.face_cache
     ckpt_args["n_frames"] = cli_args.n_frames
+    ckpt_args["sampling_mode"] = cli_args.sampling_mode
     return SimpleNamespace(**ckpt_args)
 
 
@@ -160,6 +166,7 @@ def main():
     frozen_branch, frame_args = load_frozen_branch(args.frame_ckpt, args, device)
     feature_dim = int(frame_args.spectral_relation_dim)
     print(f"frozen frame relation mode: {getattr(frame_args, 'relation_mode', 'full')}")
+    print(f"sampling mode: {args.sampling_mode}")
     print(f"pair feature dim: {feature_dim}")
 
     train_loader = DataLoader(
