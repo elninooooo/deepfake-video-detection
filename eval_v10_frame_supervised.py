@@ -18,6 +18,7 @@ if str(THIS_DIR) not in sys.path:
 from data_pipeline.video_clip_dataset import CelebDFClipDataset
 from modelsgenerate.residual_spectral_relation import RELATION_MODES
 from train_v10_frame_supervised import V10FrameClassifier, collate_drop_meta
+from train_v10_frame_supervised import adjacent_pair_start_indices
 from utils.metrics import evaluate
 
 
@@ -48,11 +49,13 @@ def build_args_from_checkpoint(cli_args, ckpt_args):
     merged = dict(ckpt_args or {})
     merged.setdefault("relation_mode", "full")
     merged.setdefault("sampling_mode", "legacy")
+    merged.setdefault("pair_index_mode", "all_adjacent")
     for key in [
         "splits",
         "face_cache",
         "n_frames",
         "sampling_mode",
+        "pair_index_mode",
         "residual_mode",
         "relation_mode",
         "phase_mid_low",
@@ -99,7 +102,12 @@ def eval_on_crfs(model, model_args, cli_args, crfs, device, desc):
         x = x.to(device, non_blocking=True)
         if cli_args.eval_pair_mode == "all":
             pair_scores = []
-            for i in range(x.size(1) - 1):
+            starts = adjacent_pair_start_indices(
+                x.size(1),
+                getattr(model_args, "pair_index_mode", "all_adjacent"),
+                x.device,
+            )
+            for i in starts.tolist():
                 logits = model.forward_pair(x[:, i:i + 2])
                 pair_scores.append(torch.sigmoid(logits))
             score = aggregate_pair_scores(
@@ -131,6 +139,10 @@ def main():
                    choices=sorted(CelebDFClipDataset.SAMPLING_MODES),
                    default=None,
                    help="Override checkpoint temporal sampling protocol.")
+    p.add_argument("--pair_index_mode",
+                   choices=["all_adjacent", "within_4x4"],
+                   default=None,
+                   help="Override which adjacent pair positions are evaluated.")
     p.add_argument("--residual_mode", choices=["abs", "signed", "gradient"], default=None)
     p.add_argument("--relation_mode", choices=sorted(RELATION_MODES), default=None)
     p.add_argument("--phase_mid_low", type=float, default=None)

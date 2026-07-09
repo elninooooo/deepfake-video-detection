@@ -66,6 +66,10 @@ def parse_args():
                    choices=["uniform", "residual_energy", "mid_residual_energy"],
                    default="uniform",
                    help="Pair reliability weights computed from each pair itself.")
+    p.add_argument("--pair_index_mode",
+                   choices=["all_adjacent", "within_4x4"],
+                   default="all_adjacent",
+                   help="Which adjacent pair positions are eligible for training/evaluation.")
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--epochs", type=int, default=80)
@@ -160,9 +164,25 @@ def select_adjacent_pair(x: torch.Tensor, train: bool):
     return torch.stack([x[batch, idx], x[batch, idx + 1]], dim=1)
 
 
-def build_adjacent_pairs(x: torch.Tensor) -> torch.Tensor:
-    """Return all adjacent pairs as (B, T-1, 2, C, H, W)."""
-    return torch.stack([x[:, :-1], x[:, 1:]], dim=2)
+def adjacent_pair_start_indices(n_frames: int, mode: str, device: torch.device) -> torch.Tensor:
+    if mode == "all_adjacent":
+        return torch.arange(n_frames - 1, device=device)
+    if mode == "within_4x4":
+        if n_frames % 4 != 0:
+            raise ValueError("--pair_index_mode within_4x4 requires --n_frames divisible by 4.")
+        block = n_frames // 4
+        starts = []
+        for seg in range(4):
+            base = seg * block
+            starts.extend(range(base, base + block - 1))
+        return torch.tensor(starts, device=device, dtype=torch.long)
+    raise ValueError(f"Unsupported pair_index_mode={mode!r}")
+
+
+def build_adjacent_pairs(x: torch.Tensor, pair_index_mode: str = "all_adjacent") -> torch.Tensor:
+    """Return eligible adjacent pairs as (B, P, 2, C, H, W)."""
+    starts = adjacent_pair_start_indices(x.size(1), pair_index_mode, x.device)
+    return torch.stack([x[:, starts], x[:, starts + 1]], dim=2)
 
 
 def sample_pair_indices(batch_size: int, n_pairs: int, k: int, device: torch.device) -> torch.Tensor:
@@ -203,7 +223,7 @@ def flatten_pairs(x_pairs: torch.Tensor) -> torch.Tensor:
 
 def train_pair_forward(model: nn.Module, x: torch.Tensor, y: torch.Tensor, args, loss_fn):
     """Compute loss/logits for unordered adjacent-pair training modes."""
-    all_pairs = build_adjacent_pairs(x)
+    all_pairs = build_adjacent_pairs(x, args.pair_index_mode)
     b, n_pairs = all_pairs.shape[:2]
 
     if args.train_pair_mode in ("random_k", "random_k_bag"):
@@ -266,14 +286,15 @@ class V10FrameClassifier(nn.Module):
 
 
 @torch.no_grad()
-def run_eval(model, loader, device, pair_mode: str):
+def run_eval(model, loader, device, pair_mode: str, pair_index_mode: str = "all_adjacent"):
     model.eval()
     scores, labels = [], []
     for x, y in tqdm(loader, desc="eval", leave=False):
         x = x.to(device, non_blocking=True)
         if pair_mode == "all":
             pair_scores = []
-            for i in range(x.size(1) - 1):
+            starts = adjacent_pair_start_indices(x.size(1), pair_index_mode, x.device)
+            for i in starts.tolist():
                 logits = model.forward_pair(x[:, i:i + 2])
                 pair_scores.append(torch.sigmoid(logits))
             score = torch.stack(pair_scores, dim=1).mean(dim=1)
@@ -306,6 +327,7 @@ def main():
     print(
         f"train pair mode: {args.train_pair_mode} "
         f"k={args.train_pair_k} pair_weight={args.pair_weight_mode} "
+        f"pair_index={args.pair_index_mode} "
         f"bag_loss_weight={args.bag_loss_weight}"
     )
     print(f"validation pair mode: {args.eval_pair_mode}")
@@ -357,7 +379,7 @@ def main():
 
         train_loss = loss_sum / max(1, n_seen)
         train_report = evaluate(np.concatenate(train_targets), np.concatenate(train_scores))
-        val_report = run_eval(model, val_loader, device, args.eval_pair_mode)
+        val_report = run_eval(model, val_loader, device, args.eval_pair_mode, args.pair_index_mode)
         print(
             f"[epoch {epoch + 1}] loss={train_loss:.4f} "
             f"train_auc={train_report.auc:.4f} train_acc={train_report.acc:.4f} "
