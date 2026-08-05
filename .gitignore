@@ -65,6 +65,7 @@ __pycache__/
 # ---- Datasets (too large for GitHub) ----
 Celeb-DF/
 Celeb-real/
+celeb-df-v2/
 Celeb-DF-recompressed/
 face_cache/
 frames/
