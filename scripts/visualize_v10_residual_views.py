@@ -1,8 +1,9 @@
-"""Visualize the four residual views used by V10.
+"""Visualize the residual views used by V10.
 
 The script loads one cached video clip, builds the Sobel-gradient residual for
 one adjacent frame pair, splits it into original/low/mid/high residual views,
-and saves publication-friendly PNG images.
+and saves publication-friendly PNG images. It can also compare RGB residual
+views with Sobel-gradient residual views.
 
 Example:
     python scripts/visualize_v10_residual_views.py ^
@@ -86,6 +87,54 @@ def save_labeled_grid(images, labels, out_path: Path, pad: int = 18, label_h: in
     canvas.save(out_path)
 
 
+def save_two_row_grid(rows, row_labels, col_labels, out_path: Path,
+                      pad: int = 18, label_h: int = 36, row_label_w: int = 150):
+    panel_w = max(img.width for row in rows for img in row)
+    panel_h = max(img.height for row in rows for img in row)
+    w = row_label_w + pad * (len(col_labels) + 1) + panel_w * len(col_labels)
+    h = label_h + pad * (len(rows) + 1) + panel_h * len(rows)
+    canvas = Image.new("RGB", (w, h), "white")
+    draw = ImageDraw.Draw(canvas)
+    try:
+        title_font = ImageFont.truetype("arial.ttf", 18)
+        row_font = ImageFont.truetype("arial.ttf", 18)
+    except OSError:
+        title_font = ImageFont.load_default()
+        row_font = ImageFont.load_default()
+
+    for col, label in enumerate(col_labels):
+        x = row_label_w + pad + col * (panel_w + pad)
+        bbox = draw.textbbox((0, 0), label, font=title_font)
+        text_w = bbox[2] - bbox[0]
+        draw.text((x + (panel_w - text_w) // 2, pad), label, fill=(20, 20, 20), font=title_font)
+
+    for row_idx, (images, row_label) in enumerate(zip(rows, row_labels)):
+        y = label_h + pad + row_idx * (panel_h + pad)
+        bbox = draw.textbbox((0, 0), row_label, font=row_font)
+        text_h = bbox[3] - bbox[1]
+        draw.text((pad, y + (panel_h - text_h) // 2), row_label, fill=(20, 20, 20), font=row_font)
+        for col, img in enumerate(images):
+            x = row_label_w + pad + col * (panel_w + pad)
+            canvas.paste(img, (x, y))
+
+    canvas.save(out_path)
+
+
+def render_view_panels(views, pair_index: int, args, cmap_lookup):
+    panels = []
+    for view in views:
+        arr = tensor_view_to_numpy(view[pair_index])
+        gray = normalize_map(arr, percentile=args.percentile, use_abs=True)
+        if args.colormap == "gray":
+            img = Image.fromarray(gray).convert("RGB")
+        else:
+            img = colorize(gray, cmap_lookup[args.colormap])
+        if args.image_size > 0:
+            img = img.resize((args.image_size, args.image_size), Image.Resampling.BICUBIC)
+        panels.append(img)
+    return panels
+
+
 def main():
     parser = argparse.ArgumentParser("Visualize V10 original/low/mid/high residual views")
     parser.add_argument("--splits", default="splits.json")
@@ -110,6 +159,8 @@ def main():
     parser.add_argument("--colormap", choices=["gray", "magma", "viridis", "turbo"], default="magma")
     parser.add_argument("--percentile", type=float, default=99.0,
                         help="Robust upper percentile used for visualization scaling.")
+    parser.add_argument("--compare_rgb_residual", action="store_true",
+                        help="Also save a two-row RGB residual vs gradient residual comparison.")
     args = parser.parse_args()
 
     if not 0 <= args.pair_index <= args.n_frames - 2:
@@ -140,15 +191,15 @@ def main():
     x, y, meta = dataset[sample_index]
     clip = x.unsqueeze(0)
 
-    branch = ResidualSpectralRelationBranch(
+    gradient_branch = ResidualSpectralRelationBranch(
         mid_low=args.mid_low,
         mid_high=args.mid_high,
         residual_mode="gradient",
         relation_mode="cos_only",
     )
     with torch.no_grad():
-        residual = branch._residual(clip)
-        views = branch._frequency_views(residual)
+        gradient_residual = gradient_branch._residual(clip)
+        gradient_views = gradient_branch._frequency_views(gradient_residual)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -159,24 +210,39 @@ def main():
         "turbo": cv2.COLORMAP_TURBO,
     }
 
-    panels = []
-    for name, view in zip(VIEW_NAMES, views):
-        arr = tensor_view_to_numpy(view[args.pair_index])
-        gray = normalize_map(arr, percentile=args.percentile, use_abs=True)
-        if args.colormap == "gray":
-            img = Image.fromarray(gray).convert("RGB")
-        else:
-            img = colorize(gray, cmap_lookup[args.colormap])
-        if args.image_size > 0:
-            img = img.resize((args.image_size, args.image_size), Image.Resampling.BICUBIC)
+    panels = render_view_panels(gradient_views, args.pair_index, args, cmap_lookup)
+    for name, img in zip(VIEW_NAMES, panels):
         img.save(out_dir / f"{name}_residual_pair{args.pair_index:02d}.png")
-        panels.append(img)
 
     save_labeled_grid(
         panels,
         ["Original residual", "Low band", "Mid band", "High band"],
         out_dir / f"v10_residual_views_pair{args.pair_index:02d}.png",
     )
+
+    if args.compare_rgb_residual:
+        rgb_branch = ResidualSpectralRelationBranch(
+            mid_low=args.mid_low,
+            mid_high=args.mid_high,
+            residual_mode="abs",
+            relation_mode="cos_only",
+        )
+        with torch.no_grad():
+            rgb_residual = rgb_branch._residual(clip)
+            rgb_views = rgb_branch._frequency_views(rgb_residual)
+        rgb_panels = render_view_panels(rgb_views, args.pair_index, args, cmap_lookup)
+
+        for name, img in zip(VIEW_NAMES, rgb_panels):
+            img.save(out_dir / f"rgb_{name}_residual_pair{args.pair_index:02d}.png")
+        for name, img in zip(VIEW_NAMES, panels):
+            img.save(out_dir / f"gradient_{name}_residual_pair{args.pair_index:02d}.png")
+
+        save_two_row_grid(
+            [rgb_panels, panels],
+            ["RGB residual", "Gradient residual"],
+            ["Original", "Low band", "Mid band", "High band"],
+            out_dir / f"rgb_vs_gradient_residual_views_pair{args.pair_index:02d}.png",
+        )
 
     info = {
         "video": meta["video"],
