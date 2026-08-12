@@ -15,6 +15,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import torch
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from data_pipeline.video_clip_dataset import CelebDFClipDataset
+from modelsgenerate.residual_spectral_relation import ResidualSpectralRelationBranch
 
 
 def to_uint8_rgb(frames):
@@ -59,6 +61,70 @@ def colorize(gray, cmap):
     bgr = cv2.applyColorMap(gray, lookup[cmap])
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     return Image.fromarray(rgb)
+
+
+def tensor_view_to_gray(view, pair_index, percentile):
+    arr = view[pair_index].detach().cpu().permute(1, 2, 0).numpy()
+    if arr.ndim == 3:
+        arr = arr.mean(axis=2)
+    return normalize_stack(np.abs(arr)[None], percentile=percentile)[0]
+
+
+def frequency_pipeline_images(residual, mid_low, mid_high, percentile, cmap):
+    h, w = residual.shape
+    yy = np.linspace(-1.0, 1.0, h, dtype=np.float32)
+    xx = np.linspace(-1.0, 1.0, w, dtype=np.float32)
+    grid_y, grid_x = np.meshgrid(yy, xx, indexing="ij")
+    radius = np.sqrt(grid_x * grid_x + grid_y * grid_y) / np.sqrt(2.0)
+    masks = {
+        "low": (radius < mid_low).astype(np.float32),
+        "mid": ((radius >= mid_low) & (radius <= mid_high)).astype(np.float32),
+        "high": (radius > mid_high).astype(np.float32),
+    }
+
+    spec = np.fft.fftshift(np.fft.fft2(residual, norm="ortho"))
+    full_ifft = np.fft.ifft2(np.fft.ifftshift(spec), norm="ortho").real
+
+    def spectrum_to_gray(spectrum):
+        mag = np.log1p(np.abs(spectrum))
+        return normalize_stack(mag[None], percentile=percentile)[0]
+
+    def spatial_to_img(arr):
+        gray = normalize_stack(np.abs(arr)[None], percentile=percentile)[0]
+        return colorize(gray, cmap)
+
+    outputs = [
+        ("01_gradient_residual", "Gradient residual", spatial_to_img(residual)),
+        ("02_fft_spectrum", "FFT log spectrum", colorize(spectrum_to_gray(spec), cmap)),
+        ("03_full_ifft", "Full-spectrum iFFT", spatial_to_img(full_ifft)),
+    ]
+
+    for name, mask in masks.items():
+        mask_gray = (mask * 255).astype(np.uint8)
+        outputs.append((f"04_{name}_mask", f"{name.capitalize()} mask", Image.fromarray(mask_gray).convert("RGB")))
+
+    for name, mask in masks.items():
+        masked_spec = spec * mask
+        outputs.append(
+            (
+                f"05_{name}_masked_spectrum",
+                f"{name.capitalize()} masked spectrum",
+                colorize(spectrum_to_gray(masked_spec), cmap),
+            )
+        )
+
+    for name, mask in masks.items():
+        masked_spec = spec * mask
+        ifft_view = np.fft.ifft2(np.fft.ifftshift(masked_spec), norm="ortho").real
+        outputs.append(
+            (
+                f"06_{name}_ifft",
+                f"{name.capitalize()}-band iFFT",
+                spatial_to_img(ifft_view),
+            )
+        )
+
+    return outputs
 
 
 def labeled_grid(images, labels, cols, out_path, cell_size=160, pad=14, label_h=28):
@@ -115,11 +181,21 @@ def main():
     parser.add_argument("--out_dir", default="output/v10_frame_gradient_library")
     parser.add_argument("--colormap", choices=["gray", "magma", "viridis", "turbo"], default="magma")
     parser.add_argument("--percentile", type=float, default=99.0)
+    parser.add_argument("--mid_low", type=float, default=0.10)
+    parser.add_argument("--mid_high", type=float, default=0.70)
+    parser.add_argument(
+        "--frequency_pair_index",
+        type=int,
+        default=0,
+        help="Adjacent pair used for original/low/mid/high gradient residual views.",
+    )
     parser.add_argument("--grid_cell_size", type=int, default=160)
     args = parser.parse_args()
 
     if args.n_frames != 16:
         raise ValueError("This library script is intended for n_frames=16.")
+    if not 0 <= args.frequency_pair_index <= args.n_frames - 2:
+        raise ValueError(f"--frequency_pair_index must be in [0, {args.n_frames - 2}]")
 
     dataset = CelebDFClipDataset(
         split_json=args.splits,
@@ -147,13 +223,16 @@ def main():
     rgb_dir = out_dir / "rgb_frames"
     grad_dir = out_dir / "gradient_frames"
     residual_dir = out_dir / "gradient_residuals"
+    freq_dir = out_dir / f"gradient_frequency_views_pair{args.frequency_pair_index:02d}"
+    pipeline_dir = out_dir / f"frequency_pipeline_pair{args.frequency_pair_index:02d}"
     sheet_dir = out_dir / "contact_sheets"
-    for d in (rgb_dir, grad_dir, residual_dir, sheet_dir):
+    for d in (rgb_dir, grad_dir, residual_dir, freq_dir, pipeline_dir, sheet_dir):
         d.mkdir(parents=True, exist_ok=True)
 
     rgb_images = []
     grad_images = []
     residual_images = []
+    frequency_images = []
 
     for i, frame in enumerate(rgb_frames):
         img = Image.fromarray(frame)
@@ -172,6 +251,53 @@ def main():
             f"src{source_indices[i]:03d}_src{source_indices[i + 1]:03d}.png"
         )
         res_img.save(residual_dir / residual_name)
+
+    branch = ResidualSpectralRelationBranch(
+        mid_low=args.mid_low,
+        mid_high=args.mid_high,
+        residual_mode="gradient",
+        relation_mode="cos_only",
+    )
+    with torch.no_grad():
+        residual_tensor = branch._residual(x.unsqueeze(0))
+        frequency_views = branch._frequency_views(residual_tensor)
+
+    frequency_names = ("original", "low", "mid", "high")
+    frequency_labels = (
+        "Original residual",
+        "Low-band iFFT",
+        "Mid-band iFFT",
+        "High-band iFFT",
+    )
+    for name, view in zip(frequency_names, frequency_views):
+        gray = tensor_view_to_gray(view, args.frequency_pair_index, args.percentile)
+        img = colorize(gray, args.colormap)
+        frequency_images.append(img)
+        img.save(
+            freq_dir
+            / f"gradient_{name}_residual_pair{args.frequency_pair_index:02d}_"
+              f"src{source_indices[args.frequency_pair_index]:03d}_"
+              f"src{source_indices[args.frequency_pair_index + 1]:03d}.png"
+        )
+
+    pipeline_outputs = frequency_pipeline_images(
+        residual=gradient_residuals[args.frequency_pair_index],
+        mid_low=args.mid_low,
+        mid_high=args.mid_high,
+        percentile=args.percentile,
+        cmap=args.colormap,
+    )
+    pipeline_images = []
+    pipeline_labels = []
+    pair_name = (
+        f"pair{args.frequency_pair_index:02d}_"
+        f"src{source_indices[args.frequency_pair_index]:03d}_"
+        f"src{source_indices[args.frequency_pair_index + 1]:03d}"
+    )
+    for file_stem, label, img in pipeline_outputs:
+        pipeline_images.append(img)
+        pipeline_labels.append(label)
+        img.save(pipeline_dir / f"{file_stem}_{pair_name}.png")
 
     rgb_labels = [f"F{i:02d} / src {source_indices[i]:03d}" for i in range(16)]
     grad_labels = [f"G{i:02d} / src {source_indices[i]:03d}" for i in range(16)]
@@ -199,6 +325,20 @@ def main():
         out_path=sheet_dir / "global16_gradient_residuals.png",
         cell_size=args.grid_cell_size,
     )
+    labeled_grid(
+        frequency_images,
+        list(frequency_labels),
+        cols=4,
+        out_path=sheet_dir / f"gradient_frequency_views_pair{args.frequency_pair_index:02d}.png",
+        cell_size=args.grid_cell_size,
+    )
+    labeled_grid(
+        pipeline_images,
+        pipeline_labels,
+        cols=3,
+        out_path=sheet_dir / f"gradient_fft_mask_ifft_pipeline_pair{args.frequency_pair_index:02d}.png",
+        cell_size=args.grid_cell_size,
+    )
 
     info = {
         "video": meta["video"],
@@ -211,6 +351,18 @@ def main():
         "source_frame_indices": ",".join(str(i) for i in source_indices),
         "gradient": "Sobel magnitude",
         "gradient_residual": "|G_{i+1} - G_i|",
+        "frequency_pair_index": args.frequency_pair_index,
+        "frequency_pair_source_indices": (
+            f"{source_indices[args.frequency_pair_index]},"
+            f"{source_indices[args.frequency_pair_index + 1]}"
+        ),
+        "frequency_views": "original residual, low-band iFFT, mid-band iFFT, high-band iFFT",
+        "frequency_pipeline": (
+            "gradient residual -> FFT log spectrum -> low/mid/high masks -> "
+            "masked spectra -> low/mid/high iFFT spatial views"
+        ),
+        "mid_low": args.mid_low,
+        "mid_high": args.mid_high,
         "colormap": args.colormap,
         "percentile": args.percentile,
     }
