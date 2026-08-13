@@ -13,12 +13,40 @@ def add_common_args(p: argparse.ArgumentParser):
                    help="Which crf{N} sub-folder under face_cache to train on")
     p.add_argument("--val_crf", default=None,
                    help="crf folder used for validation (defaults to --train_crf)")
+    p.add_argument("--train_crfs", nargs="+", default=None,
+                   help="Multiple CRF folders to combine for training; overrides --train_crf")
+    p.add_argument("--val_crfs", nargs="+", default=None,
+                   help="Multiple CRF folders to combine for validation; defaults to --train_crfs")
     p.add_argument("--n_frames", type=int, default=16)
 
     # model
-    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4"], default="v1")
+    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4", "v5", "v6", "v8", "v10"],
+                   default="v1")
     p.add_argument("--mask_ratio", type=float, default=0.5)
     p.add_argument("--mask_radius_ratio", type=float, default=0.5)
+    p.add_argument("--phase_mode",
+                   choices=["raw", "weighted", "mid_weighted"], default="raw",
+                   help="Phase representation used by phase-enabled variants.")
+    p.add_argument("--phase_confidence_quantile", type=float, default=0.95,
+                   help="Log-magnitude quantile used to normalize phase confidence.")
+    p.add_argument("--phase_mid_low", type=float, default=0.10,
+                   help="Lower normalized radius for mid_weighted phase mode.")
+    p.add_argument("--phase_mid_high", type=float, default=0.70,
+                   help="Upper normalized radius for mid_weighted phase mode.")
+    p.add_argument("--spectral_relation_dim", type=int, default=128,
+                   help="Output dimension for spectral relationship branches.")
+    p.add_argument("--residual_encoder_dim", type=int, default=256,
+                   help="Shared residual frequency-view encoder dimension for v10.")
+    p.add_argument("--residual_mode", choices=["abs", "signed", "gradient"],
+                   default="gradient",
+                   help="Residual input used by v10.")
+    p.add_argument("--relation_mode",
+                   choices=[
+                       "abs_cos", "abs_dist", "abs_only", "concat_views", "cos_dist",
+                       "cos_only", "dist_only", "feat_only", "full", "no_original",
+                   ],
+                   default="full",
+                   help="Frequency-view relationship representation used by v10.")
     p.add_argument("--d_model", type=int, default=512)
     p.add_argument("--n_heads", type=int, default=4)
 

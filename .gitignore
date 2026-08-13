@@ -19,8 +19,53 @@ env/
 .DS_Store
 Thumbs.db
 
+# Datasets
+Celeb-real/
+Celeb-DF-recompressed/
+
+# Face-crop caches
+face_cache/
+face_cache_*/
+
+# Training outputs
+checkpoints/
+results/*
+!results/v1_tim_s2_mixed_fair_cross/
+!results/v1_tim_s2_mixed_fair_cross/**
+!results/v2c_mid010_070_cross_compression/
+!results/v2c_mid010_070_cross_compression/**
+!results/v8_tim_spectral_relation_cross/
+!results/v8_tim_spectral_relation_cross/**
+!results/v10_residual_spectral_relation_cross/
+!results/v10_residual_spectral_relation_cross/**
+!results/v10_frame_supervised_cross/
+!results/v10_frame_supervised_cross/**
+!results/v10_frame_relation_ablation/
+!results/v10_frame_relation_ablation/**
+!results/v10_frame_relation_cos_only_agg_ablation/
+!results/v10_frame_relation_cos_only_agg_ablation/**
+!results/v10_frame_cos_cls_aggregator_cross/
+!results/v10_frame_cos_cls_aggregator_cross/**
+!results/v10_relation_temporal_stats/
+!results/v10_relation_temporal_stats/**
+!results/v10_relationwise_attention_all_cross/
+!results/v10_relationwise_attention_all_cross/**
+tmp/
+
+# Local artifact generators
+scripts/generate_cos_only_cls_method_pdf.py
+
+# Local experiment runner scripts
+scripts/run_*.ps1
+
+# Python cache
+__pycache__/
+.pytest_cache/
+
 # ---- Datasets (too large for GitHub) ----
 Celeb-DF/
+Celeb-real/
+celeb-df-v2/
 Celeb-DF-recompressed/
 face_cache/
 frames/
@@ -54,3 +99,5 @@ logs/
 *.key
 *.pem
 secrets.json
+
+

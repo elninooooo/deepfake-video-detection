@@ -1,0 +1,414 @@
+"""Supervised frame-level v10 residual spectral relation training.
+
+This is the formal spatial-only counterpart to v10. It removes the temporal
+transformer and directly trains the residual spectral relationship encoder to
+classify real/fake from adjacent frame-pair residual structure.
+"""
+
+import argparse
+import json
+import random
+import sys
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
+from tqdm import tqdm
+
+THIS_DIR = Path(__file__).resolve().parent
+if str(THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(THIS_DIR))
+
+from data_pipeline.video_clip_dataset import CelebDFClipDataset
+from modelsgenerate.residual_spectral_relation import (
+    RELATION_MODES,
+    ResidualSpectralRelationBranch,
+)
+from utils.metrics import evaluate
+from utils.seed import set_seed
+
+
+def parse_args():
+    p = argparse.ArgumentParser("Train supervised frame-level v10 spatial classifier")
+    p.add_argument("--splits", default="splits.json")
+    p.add_argument("--face_cache", default="face_cache_s2_all")
+    p.add_argument("--train_crfs", nargs="+", default=["crf_src", "crf0", "crf23", "crf40"])
+    p.add_argument("--val_crfs", nargs="+", default=None)
+    p.add_argument("--n_frames", type=int, default=16)
+    p.add_argument("--sampling_mode",
+                   choices=sorted(CelebDFClipDataset.SAMPLING_MODES),
+                   default="legacy",
+                   help="Temporal sampling protocol over cached face frames.")
+    p.add_argument("--residual_mode", choices=["abs", "signed", "gradient"], default="gradient")
+    p.add_argument("--relation_mode", choices=sorted(RELATION_MODES), default="full",
+                   help="Which deep frequency relationship representation to train.")
+    p.add_argument("--phase_mid_low", type=float, default=0.10)
+    p.add_argument("--phase_mid_high", type=float, default=0.70)
+    p.add_argument("--spectral_relation_dim", type=int, default=128)
+    p.add_argument("--residual_encoder_dim", type=int, default=256)
+    p.add_argument("--max_train_samples", type=int, default=0,
+                   help="Optional balanced train subset size. 0 means full train split.")
+    p.add_argument("--max_val_samples", type=int, default=0,
+                   help="Optional balanced val subset size. 0 means full val split.")
+    p.add_argument("--eval_pair_mode", choices=["center", "all"], default="all",
+                   help="Use center pair or average all adjacent pairs during validation.")
+    p.add_argument("--train_pair_mode",
+                   choices=["random_k", "all_independent", "random_k_bag", "all_weighted"],
+                   default="random_k",
+                   help="How adjacent frame pairs are used during training.")
+    p.add_argument("--train_pair_k", type=int, default=1,
+                   help="Number of random adjacent pairs per clip for random_k/random_k_bag.")
+    p.add_argument("--bag_loss_weight", type=float, default=0.5,
+                   help="Weight for unordered bag mean loss in random_k_bag.")
+    p.add_argument("--pair_weight_mode",
+                   choices=["uniform", "residual_energy", "mid_residual_energy"],
+                   default="uniform",
+                   help="Pair reliability weights computed from each pair itself.")
+    p.add_argument("--pair_index_mode",
+                   choices=["all_adjacent", "within_4x4"],
+                   default="all_adjacent",
+                   help="Which adjacent pair positions are eligible for training/evaluation.")
+    p.add_argument("--batch_size", type=int, default=8)
+    p.add_argument("--num_workers", type=int, default=4)
+    p.add_argument("--epochs", type=int, default=80)
+    p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--weight_decay", type=float, default=1e-5)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--device", choices=["cuda", "cpu"], default="cuda")
+    p.add_argument("--checkpoints", default="checkpoints")
+    p.add_argument("--name", default="v10_frame_supervised_s2_mixed")
+    return p.parse_args()
+
+
+def pick_device(name: str) -> torch.device:
+    if name == "cuda" and torch.cuda.is_available():
+        return torch.device("cuda")
+    if name == "cuda":
+        print("[WARN] CUDA requested but not available; falling back to CPU.")
+    return torch.device("cpu")
+
+
+def collate_drop_meta(batch):
+    xs = torch.stack([b[0] for b in batch], dim=0)
+    ys = torch.stack([b[1] for b in batch], dim=0)
+    return xs, ys
+
+
+def labels_for_dataset(dataset: Dataset):
+    if isinstance(dataset, CelebDFClipDataset):
+        return [int(r["label"]) for r in dataset.records]
+    if isinstance(dataset, ConcatDataset):
+        labels = []
+        for child in dataset.datasets:
+            labels.extend(labels_for_dataset(child))
+        return labels
+    if isinstance(dataset, Subset):
+        base = labels_for_dataset(dataset.dataset)
+        return [base[i] for i in dataset.indices]
+    raise TypeError(f"Unsupported dataset type: {type(dataset).__name__}")
+
+
+def balanced_subset(dataset: Dataset, max_items: int, seed: int):
+    if max_items <= 0 or len(dataset) <= max_items:
+        return dataset
+    labels = labels_for_dataset(dataset)
+    rng = random.Random(seed)
+    by_label = {0: [], 1: []}
+    for idx, label in enumerate(labels):
+        by_label[int(label)].append(idx)
+
+    chosen = []
+    per_label = max_items // 2
+    for label in (0, 1):
+        ids = by_label[label]
+        rng.shuffle(ids)
+        chosen.extend(ids[: min(per_label, len(ids))])
+    if len(chosen) < max_items:
+        chosen_set = set(chosen)
+        rest = [i for i in range(len(labels)) if i not in chosen_set]
+        rng.shuffle(rest)
+        chosen.extend(rest[: max_items - len(chosen)])
+    rng.shuffle(chosen)
+    return Subset(dataset, chosen)
+
+
+def build_split_dataset(args, crfs, split: str, train: bool, max_items: int = 0):
+    datasets = [
+        CelebDFClipDataset(
+            args.splits,
+            args.face_cache,
+            crf_tag=crf,
+            split=split,
+            n_frames=args.n_frames,
+            train=train,
+            horiz_flip=train,
+            sampling_mode=args.sampling_mode,
+        )
+        for crf in crfs
+    ]
+    dataset = datasets[0] if len(datasets) == 1 else ConcatDataset(datasets)
+    return balanced_subset(dataset, max_items, args.seed)
+
+
+def select_adjacent_pair(x: torch.Tensor, train: bool):
+    b, n = x.shape[:2]
+    if n < 2:
+        raise ValueError("Need at least two frames to form a residual pair.")
+    if train:
+        idx = torch.randint(0, n - 1, (b,), device=x.device)
+    else:
+        idx = torch.full((b,), (n - 2) // 2, device=x.device, dtype=torch.long)
+    batch = torch.arange(b, device=x.device)
+    return torch.stack([x[batch, idx], x[batch, idx + 1]], dim=1)
+
+
+def adjacent_pair_start_indices(n_frames: int, mode: str, device: torch.device) -> torch.Tensor:
+    if mode == "all_adjacent":
+        return torch.arange(n_frames - 1, device=device)
+    if mode == "within_4x4":
+        if n_frames % 4 != 0:
+            raise ValueError("--pair_index_mode within_4x4 requires --n_frames divisible by 4.")
+        block = n_frames // 4
+        starts = []
+        for seg in range(4):
+            base = seg * block
+            starts.extend(range(base, base + block - 1))
+        return torch.tensor(starts, device=device, dtype=torch.long)
+    raise ValueError(f"Unsupported pair_index_mode={mode!r}")
+
+
+def build_adjacent_pairs(x: torch.Tensor, pair_index_mode: str = "all_adjacent") -> torch.Tensor:
+    """Return eligible adjacent pairs as (B, P, 2, C, H, W)."""
+    starts = adjacent_pair_start_indices(x.size(1), pair_index_mode, x.device)
+    return torch.stack([x[:, starts], x[:, starts + 1]], dim=2)
+
+
+def sample_pair_indices(batch_size: int, n_pairs: int, k: int, device: torch.device) -> torch.Tensor:
+    k = min(k, n_pairs)
+    if k <= 0:
+        raise ValueError("--train_pair_k must be positive.")
+    noise = torch.rand(batch_size, n_pairs, device=device)
+    return noise.topk(k, dim=1).indices
+
+
+def gather_pair_subset(all_pairs: torch.Tensor, pair_idx: torch.Tensor) -> torch.Tensor:
+    batch = torch.arange(all_pairs.size(0), device=all_pairs.device).unsqueeze(1)
+    return all_pairs[batch, pair_idx]
+
+
+def pair_reliability_weights(x_pairs: torch.Tensor, mode: str, eps: float = 1e-6) -> torch.Tensor:
+    """Return per-pair weights from pair-local statistics, without temporal positions."""
+    if mode == "uniform":
+        return torch.ones(x_pairs.shape[:2], device=x_pairs.device, dtype=x_pairs.dtype)
+
+    diff = (x_pairs[:, :, 1] - x_pairs[:, :, 0]).abs()
+    energy = diff.flatten(2).mean(dim=2)
+    if mode == "residual_energy":
+        weights = energy / energy.mean(dim=1, keepdim=True).clamp_min(eps)
+    elif mode == "mid_residual_energy":
+        center = energy.median(dim=1, keepdim=True).values
+        spread = (energy - center).abs().median(dim=1, keepdim=True).values.clamp_min(eps)
+        weights = torch.exp(-((energy - center) / (2.0 * spread)).pow(2))
+    else:
+        raise ValueError(f"Unsupported pair weight mode: {mode}")
+    return weights.clamp_min(eps)
+
+
+def flatten_pairs(x_pairs: torch.Tensor) -> torch.Tensor:
+    b, k = x_pairs.shape[:2]
+    return x_pairs.reshape(b * k, *x_pairs.shape[2:])
+
+
+def train_pair_forward(model: nn.Module, x: torch.Tensor, y: torch.Tensor, args, loss_fn):
+    """Compute loss/logits for unordered adjacent-pair training modes."""
+    all_pairs = build_adjacent_pairs(x, args.pair_index_mode)
+    b, n_pairs = all_pairs.shape[:2]
+
+    if args.train_pair_mode in ("random_k", "random_k_bag"):
+        pair_idx = sample_pair_indices(b, n_pairs, args.train_pair_k, x.device)
+        x_pairs = gather_pair_subset(all_pairs, pair_idx)
+    elif args.train_pair_mode in ("all_independent", "all_weighted"):
+        x_pairs = all_pairs
+    else:
+        raise ValueError(f"Unsupported train_pair_mode={args.train_pair_mode!r}")
+
+    k = x_pairs.size(1)
+    logits = model.forward_pair(flatten_pairs(x_pairs)).reshape(b, k)
+    pair_targets = y[:, None].expand_as(logits)
+    pair_loss = nn.functional.binary_cross_entropy_with_logits(
+        logits,
+        pair_targets,
+        reduction="none",
+    )
+
+    if args.train_pair_mode == "all_weighted" or args.pair_weight_mode != "uniform":
+        weights = pair_reliability_weights(x_pairs, args.pair_weight_mode)
+        loss = (pair_loss * weights).sum() / weights.sum().clamp_min(1e-6)
+    else:
+        loss = pair_loss.mean()
+
+    if args.train_pair_mode == "random_k_bag":
+        bag_prob = torch.sigmoid(logits).mean(dim=1)
+        bag_loss = loss_fn(torch.logit(bag_prob.clamp(1e-6, 1 - 1e-6)), y)
+        loss = loss + args.bag_loss_weight * bag_loss
+
+    return loss, logits.reshape(-1), pair_targets.reshape(-1)
+
+
+class V10FrameClassifier(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.branch = ResidualSpectralRelationBranch(
+            out_dim=args.spectral_relation_dim,
+            encoder_dim=args.residual_encoder_dim,
+            mid_low=args.phase_mid_low,
+            mid_high=args.phase_mid_high,
+            residual_mode=args.residual_mode,
+            relation_mode=args.relation_mode,
+            dropout=0.1,
+        )
+        self.classifier = nn.Sequential(
+            nn.LayerNorm(args.spectral_relation_dim),
+            nn.Linear(args.spectral_relation_dim, args.spectral_relation_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(args.spectral_relation_dim, 1),
+        )
+
+    def forward_pair(self, x_pair: torch.Tensor):
+        feat = self.branch(x_pair).squeeze(1)
+        return self.classifier(feat).squeeze(-1)
+
+    def forward(self, x: torch.Tensor):
+        return self.forward_pair(select_adjacent_pair(x, self.training))
+
+
+@torch.no_grad()
+def run_eval(model, loader, device, pair_mode: str, pair_index_mode: str = "all_adjacent"):
+    model.eval()
+    scores, labels = [], []
+    for x, y in tqdm(loader, desc="eval", leave=False):
+        x = x.to(device, non_blocking=True)
+        if pair_mode == "all":
+            pair_scores = []
+            starts = adjacent_pair_start_indices(x.size(1), pair_index_mode, x.device)
+            for i in starts.tolist():
+                logits = model.forward_pair(x[:, i:i + 2])
+                pair_scores.append(torch.sigmoid(logits))
+            score = torch.stack(pair_scores, dim=1).mean(dim=1)
+        else:
+            logits = model(x)
+            score = torch.sigmoid(logits)
+        scores.append(score.cpu().numpy())
+        labels.append(y.numpy())
+    return evaluate(np.concatenate(labels), np.concatenate(scores))
+
+
+def main():
+    args = parse_args()
+    set_seed(args.seed)
+    device = pick_device(args.device)
+
+    ckpt_dir = Path(args.checkpoints) / args.name
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_path = ckpt_dir / "train_log.jsonl"
+
+    val_crfs = args.val_crfs or args.train_crfs
+    train_set = build_split_dataset(args, args.train_crfs, "train", True, args.max_train_samples)
+    val_set = build_split_dataset(args, val_crfs, "val", False, args.max_val_samples)
+    train_labels = labels_for_dataset(train_set)
+    print(f"train crfs: {args.train_crfs}  val crfs: {val_crfs}")
+    print(f"train clips: {len(train_set)}  val clips: {len(val_set)}")
+    print(f"train labels: real={train_labels.count(0)} fake={train_labels.count(1)}")
+    print(f"relation mode: {args.relation_mode}")
+    print(f"sampling mode: {args.sampling_mode}")
+    print(
+        f"train pair mode: {args.train_pair_mode} "
+        f"k={args.train_pair_k} pair_weight={args.pair_weight_mode} "
+        f"pair_index={args.pair_index_mode} "
+        f"bag_loss_weight={args.bag_loss_weight}"
+    )
+    print(f"validation pair mode: {args.eval_pair_mode}")
+
+    train_loader = DataLoader(
+        train_set,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        collate_fn=collate_drop_meta,
+        drop_last=True,
+    )
+    val_loader = DataLoader(
+        val_set,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        collate_fn=collate_drop_meta,
+    )
+
+    model = V10FrameClassifier(args).to(device)
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"trainable params: {n_params / 1e6:.2f} M")
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    loss_fn = nn.BCEWithLogitsLoss()
+
+    best_auc = -1.0
+    for epoch in range(args.epochs):
+        model.train()
+        loss_sum, n_seen = 0.0, 0
+        train_scores, train_targets = [], []
+        pbar = tqdm(train_loader, desc=f"epoch {epoch + 1}/{args.epochs}")
+        for x, y in pbar:
+            x = x.to(device, non_blocking=True)
+            y = y.to(device, non_blocking=True)
+            loss, logits, targets = train_pair_forward(model, x, y, args, loss_fn)
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+
+            bs = y.size(0)
+            loss_sum += float(loss.detach()) * bs
+            n_seen += bs
+            train_scores.append(torch.sigmoid(logits.detach()).cpu().numpy())
+            train_targets.append(targets.detach().cpu().numpy())
+            pbar.set_postfix(loss=f"{loss_sum / max(1, n_seen):.4f}")
+
+        train_loss = loss_sum / max(1, n_seen)
+        train_report = evaluate(np.concatenate(train_targets), np.concatenate(train_scores))
+        val_report = run_eval(model, val_loader, device, args.eval_pair_mode, args.pair_index_mode)
+        print(
+            f"[epoch {epoch + 1}] loss={train_loss:.4f} "
+            f"train_auc={train_report.auc:.4f} train_acc={train_report.acc:.4f} "
+            f"val_auc={val_report.auc:.4f} val_acc={val_report.acc:.4f}"
+        )
+
+        log_entry = {
+            "epoch": epoch + 1,
+            "train_loss": train_loss,
+            **{f"train_{k}": v for k, v in train_report.to_dict().items()},
+            **{f"val_{k}": v for k, v in val_report.to_dict().items()},
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_entry) + "\n")
+
+        ckpt = {
+            "epoch": epoch,
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "best_auc": best_auc,
+            "args": vars(args),
+        }
+        torch.save(ckpt, ckpt_dir / "last.pth")
+        if val_report.auc == val_report.auc and val_report.auc > best_auc:
+            best_auc = val_report.auc
+            torch.save(ckpt | {"best_auc": best_auc}, ckpt_dir / "best.pth")
+
+    print(f"\nDone. Best val AUC = {best_auc:.4f}. Checkpoints in {ckpt_dir}")
+
+
+if __name__ == "__main__":
+    main()

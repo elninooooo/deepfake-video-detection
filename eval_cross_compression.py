@@ -16,14 +16,13 @@ python eval_cross_compression.py \
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset, DataLoader
 from tqdm import tqdm
 
 THIS_DIR = Path(__file__).resolve().parent
@@ -41,16 +40,25 @@ def collate(batch):
     return xs, ys
 
 
+def build_eval_dataset(args, crfs, split):
+    datasets = [
+        CelebDFClipDataset(args.splits, args.face_cache, crf_tag=crf,
+                           split=split, n_frames=args.n_frames, train=False)
+        for crf in crfs
+    ]
+    if len(datasets) == 1:
+        return datasets[0]
+    return ConcatDataset(datasets)
+
+
 @torch.no_grad()
-def eval_on_crf(model, args, crf_tag, split, device):
-    ds = CelebDFClipDataset(args.splits, args.face_cache,
-                            crf_tag=crf_tag, split=split,
-                            n_frames=args.n_frames, train=False)
+def eval_on_crfs(model, args, crfs, split, device, desc):
+    ds = build_eval_dataset(args, crfs, split)
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
                         num_workers=args.num_workers, pin_memory=True,
                         collate_fn=collate)
     scores, labels = [], []
-    for x, y in tqdm(loader, desc=f"eval/{crf_tag}", leave=False):
+    for x, y in tqdm(loader, desc=f"eval/{desc}", leave=False):
         x = x.to(device, non_blocking=True)
         logit = model(x).squeeze(-1)
         scores.append(torch.sigmoid(logit).cpu().numpy())
@@ -63,18 +71,36 @@ def eval_on_crf(model, args, crf_tag, split, device):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--ckpt", required=True)
-    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4"], required=True)
+    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4", "v5", "v6", "v8", "v10"],
+                   required=True)
     p.add_argument("--splits", default="splits.json")
     p.add_argument("--face_cache", default="face_cache")
     p.add_argument("--train_crf", required=True,
                    help="The CRF the model was trained on (used as reference for drop)")
     p.add_argument("--crfs", nargs="+", required=True, help="e.g. crf0 crf23 crf40")
+    p.add_argument("--include_mixed", action="store_true",
+                   help="Also report one pooled metric over all folders in --crfs.")
     p.add_argument("--split", default="test", choices=["train", "val", "test"])
     p.add_argument("--n_frames", type=int, default=16)
     p.add_argument("--batch_size", type=int, default=4)
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--mask_ratio", type=float, default=0.5)
     p.add_argument("--mask_radius_ratio", type=float, default=0.5)
+    p.add_argument("--phase_mode", choices=["raw", "weighted", "mid_weighted"],
+                   default="raw")
+    p.add_argument("--phase_confidence_quantile", type=float, default=0.95)
+    p.add_argument("--phase_mid_low", type=float, default=0.10)
+    p.add_argument("--phase_mid_high", type=float, default=0.70)
+    p.add_argument("--spectral_relation_dim", type=int, default=128)
+    p.add_argument("--residual_encoder_dim", type=int, default=256)
+    p.add_argument("--residual_mode", choices=["abs", "signed", "gradient"],
+                   default="gradient")
+    p.add_argument("--relation_mode",
+                   choices=[
+                       "abs_cos", "abs_dist", "abs_only", "concat_views", "cos_dist",
+                       "cos_only", "dist_only", "feat_only", "full", "no_original",
+                   ],
+                   default="full")
     p.add_argument("--d_model", type=int, default=512)
     p.add_argument("--n_heads", type=int, default=4)
     p.add_argument("--out_dir", default="results")
@@ -89,16 +115,20 @@ def main():
 
     rows = []
     for crf in args.crfs:
-        rep = eval_on_crf(model, args, crf, args.split, device)
+        rep = eval_on_crfs(model, args, [crf], args.split, device, crf)
         if rep is None:
             print(f"[WARN] no data for {crf}; skipping")
             continue
         row = {"crf": crf, **rep.to_dict()}
         rows.append(row)
+    if args.include_mixed:
+        rep = eval_on_crfs(model, args, args.crfs, args.split, device, "mixed")
+        if rep is not None:
+            rows.append({"crf": "mixed", **rep.to_dict()})
 
     df = pd.DataFrame(rows)
     ref_row = df[df["crf"] == args.train_crf]
-    if not ref_row.empty:
+    if args.train_crf != "mixed" and not ref_row.empty:
         df["auc_drop"] = ref_row["auc"].values[0] - df["auc"]
         df["acc_drop"] = ref_row["acc"].values[0] - df["acc"]
 
