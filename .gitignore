@@ -101,3 +101,5 @@ logs/
 secrets.json
 
 
+*.json
+FF++/

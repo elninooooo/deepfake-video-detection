@@ -1,13 +1,15 @@
-"""Visualize FFT low-frequency removal for one image.
+"""Visualize FFT frequency-region removal for one image.
 
 Outputs four images:
   1. original image
   2. FFT log-magnitude spectrum
-  3. FFT spectrum after covering the centered low-frequency area
-  4. inverse-FFT reconstruction after low-frequency removal
+  3. FFT spectrum after covering selected centered frequency area
+  4. inverse-FFT reconstruction after frequency removal
 
 Unlike the V10 band split, this script does not use radial low/mid/high masks.
-It simply masks a centered square region in the shifted FFT spectrum.
+It simply masks a centered square region in the shifted FFT spectrum. Use
+--mask_mode low to cover only the low-frequency center, or --mask_mode low_mid
+to cover a larger centered area representing low- and mid-frequency removal.
 """
 
 import argparse
@@ -60,14 +62,14 @@ def centered_square_mask(shape, mask_ratio: float) -> np.ndarray:
     return mask
 
 
-def remove_low_frequency(rgb: np.ndarray, mask_ratio: float, percentile: float):
+def remove_frequency_region(rgb: np.ndarray, mask_ratio: float, percentile: float):
     img = rgb.astype(np.float32) / 255.0
     shifted = np.fft.fftshift(np.fft.fft2(img, axes=(0, 1), norm="ortho"), axes=(0, 1))
     mask = centered_square_mask(img.shape, mask_ratio)
     masked = shifted * mask[:, :, None]
     recon = np.fft.ifft2(np.fft.ifftshift(masked, axes=(0, 1)), axes=(0, 1), norm="ortho").real
 
-    # Low-frequency removal produces signed high-pass residuals. Shift around
+    # Frequency removal produces signed residuals. Shift around
     # zero for visualization rather than clipping negative values away.
     recon_vis = normalize_uint8(recon, percentile=percentile)
     return shifted, masked, recon_vis
@@ -97,14 +99,26 @@ def save_contact_sheet(images, labels, out_path: Path, cell_size: int = 256):
 
 
 def main():
-    parser = argparse.ArgumentParser("Show FFT low-frequency masking and iFFT reconstruction")
+    parser = argparse.ArgumentParser("Show FFT frequency masking and iFFT reconstruction")
     parser.add_argument("--image", required=True, help="Input image path.")
     parser.add_argument("--out_dir", default="output/fft_lowfreq_removal")
+    parser.add_argument(
+        "--mask_mode",
+        choices=["low", "low_mid"],
+        default="low",
+        help="low masks the frequency center; low_mid masks a larger center area.",
+    )
     parser.add_argument(
         "--mask_ratio",
         type=float,
         default=0.16,
-        help="Side length of centered square mask as a fraction of min(H,W).",
+        help="Centered square side ratio for --mask_mode low.",
+    )
+    parser.add_argument(
+        "--low_mid_mask_ratio",
+        type=float,
+        default=0.52,
+        help="Centered square side ratio for --mask_mode low_mid.",
     )
     parser.add_argument(
         "--percentile",
@@ -115,17 +129,18 @@ def main():
     parser.add_argument("--contact_size", type=int, default=256)
     args = parser.parse_args()
 
-    if not 0.0 < args.mask_ratio < 1.0:
-        raise ValueError("--mask_ratio must be in (0, 1).")
+    selected_mask_ratio = args.mask_ratio if args.mask_mode == "low" else args.low_mid_mask_ratio
+    if not 0.0 < selected_mask_ratio < 1.0:
+        raise ValueError("Selected mask ratio must be in (0, 1).")
 
     image_path = Path(args.image)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rgb = read_rgb(image_path)
-    shifted, masked, recon_vis = remove_low_frequency(
+    shifted, masked, recon_vis = remove_frequency_region(
         rgb,
-        mask_ratio=args.mask_ratio,
+        mask_ratio=selected_mask_ratio,
         percentile=args.percentile,
     )
 
@@ -136,29 +151,36 @@ def main():
 
     original_img.save(out_dir / "01_original.png")
     fft_img.save(out_dir / "02_fft_spectrum.png")
-    masked_fft_img.save(out_dir / "03_lowfreq_removed_fft_spectrum.png")
-    ifft_img.save(out_dir / "04_ifft_lowfreq_removed_image.png")
+    prefix = "lowfreq" if args.mask_mode == "low" else "low_mid_freq"
+    masked_fft_img.save(out_dir / f"03_{prefix}_removed_fft_spectrum.png")
+    ifft_img.save(out_dir / f"04_ifft_{prefix}_removed_image.png")
 
     save_contact_sheet(
         [original_img, fft_img, masked_fft_img, ifft_img],
-        ["Original", "FFT spectrum", "Low-frequency covered", "iFFT result"],
-        out_dir / "fft_lowfreq_removal_overview.png",
+        [
+            "Original",
+            "FFT spectrum",
+            "Low-frequency covered" if args.mask_mode == "low" else "Low+mid covered",
+            "iFFT result",
+        ],
+        out_dir / f"fft_{prefix}_removal_overview.png",
         cell_size=args.contact_size,
     )
 
     info = {
         "image": str(image_path),
         "mask_shape": "centered square",
-        "mask_ratio": args.mask_ratio,
+        "mask_mode": args.mask_mode,
+        "mask_ratio": selected_mask_ratio,
         "percentile": args.percentile,
-        "outputs": "original, fft spectrum, masked fft spectrum, ifft low-frequency removed image",
+        "outputs": "original, fft spectrum, masked fft spectrum, ifft frequency-removed image",
     }
     (out_dir / "metadata.txt").write_text(
         "\n".join(f"{k}: {v}" for k, v in info.items()),
         encoding="utf-8",
     )
 
-    print("Saved FFT low-frequency removal visualization to:")
+    print("Saved FFT frequency removal visualization to:")
     print(out_dir.resolve())
     for k, v in info.items():
         print(f"{k}: {v}")
