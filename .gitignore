@@ -30,6 +30,8 @@ face_cache_*/
 # Training outputs
 checkpoints/
 results/*
+!results/selected/
+!results/selected/**
 !results/v1_tim_s2_mixed_fair_cross/
 !results/v1_tim_s2_mixed_fair_cross/**
 !results/v2c_mid010_070_cross_compression/
