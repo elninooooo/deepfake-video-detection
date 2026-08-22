@@ -101,5 +101,17 @@ logs/
 secrets.json
 
 
+# JSON files are ignored by default, but keep reproducible public splits.
 *.json
+!splits.json
+!splits_celebdfv2_300.json
+
+# Local exploratory FF++ utilities and outputs.
 FF++/
+splits_ffpp*/
+face_cache_ffpp*/
+results/ffpp*/
+data_pipeline/build_ffpp_*.py
+
+# Local manuscript drafts.
+*.docx
