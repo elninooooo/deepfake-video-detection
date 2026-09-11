@@ -20,8 +20,14 @@ def add_common_args(p: argparse.ArgumentParser):
     p.add_argument("--n_frames", type=int, default=16)
 
     # model
-    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4", "v5", "v6", "v8", "v10"],
+    p.add_argument("--variant", choices=[
+        "v1", "v2", "v3", "v4", "v5", "v6", "v8", "v10", "ftcn", "freqnet",
+    ],
                    default="v1")
+    p.add_argument("--sampling_mode",
+                   choices=["legacy", "local16", "global16", "s2", "4x4"],
+                   default="legacy",
+                   help="Frame sampling protocol used by CelebDFClipDataset.")
     p.add_argument("--mask_ratio", type=float, default=0.5)
     p.add_argument("--mask_radius_ratio", type=float, default=0.5)
     p.add_argument("--phase_mode",
@@ -49,6 +55,15 @@ def add_common_args(p: argparse.ArgumentParser):
                    help="Frequency-view relationship representation used by v10.")
     p.add_argument("--d_model", type=int, default=512)
     p.add_argument("--n_heads", type=int, default=4)
+    p.add_argument("--ftcn_base_channels", type=int, default=32)
+    p.add_argument("--ftcn_d_model", type=int, default=1008)
+    p.add_argument("--ftcn_heads", type=int, default=12)
+    p.add_argument("--ftcn_layers", type=int, default=1)
+    p.add_argument("--ftcn_mlp_dim", type=int, default=2048)
+    p.add_argument("--ftcn_dropout", type=float, default=0.1)
+    p.add_argument("--freqnet_base_channels", type=int, default=32)
+    p.add_argument("--freqnet_frame_agg", choices=["mean_logit", "max_logit"],
+                   default="mean_logit")
 
     # training
     p.add_argument("--batch_size", type=int, default=4)

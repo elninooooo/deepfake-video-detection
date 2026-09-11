@@ -12,11 +12,13 @@ preliminary study and ablation analysis. The final method is GRFR.
 | CLS video-level aggregation | `train_v10_frame_cls_aggregator.py` |
 | GRFR video-level evaluation | `eval_v10_frame_cls_aggregator.py` |
 
-## Main Baseline
+## Main Baselines
 
 | Variant | Purpose | Entry |
 | --- | --- | --- |
 | V1 TIM | Temporal inconsistency baseline | `train.py --variant v1` |
+| FTCN | Temporal convolution baseline | `train.py --variant ftcn` |
+| FreqNet | Image-level frequency-aware baseline | `train.py --variant freqnet` |
 
 ## Preliminary Study
 

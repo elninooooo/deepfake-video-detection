@@ -25,15 +25,15 @@ global 16-frame face clip
 -> trainable CLS video-level aggregation with frozen frame-level branch
 ```
 
-The TIM model is used as the main baseline. Earlier variants are retained for
-reproducibility of the preliminary study and ablation experiments, but GRFR is
-the final proposed method.
+TIM, FTCN, and FreqNet are provided as baseline models. Earlier variants are
+retained for reproducibility of the preliminary study and ablation experiments,
+but GRFR is the final proposed method.
 
 ## Repository Layout
 
 ```text
 data_pipeline/                  Dataset split, recompression, face extraction
-modelsgenerate/                 GRFR, TIM, phase, and legacy model modules
+modelsgenerate/                 GRFR, TIM, FTCN, FreqNet, phase, and legacy modules
 scripts/                        Batch runners and visualization utilities
 docs/                           Reproduction, experiment map, and result notes
 results/selected/               Curated results used by the paper
@@ -137,6 +137,22 @@ Evaluate the GRFR video-level model:
   --out_dir results\v10_frozen_cls\random8_seed42
 ```
 
+## Baselines
+
+The repository includes three baseline families for fair comparison under the
+same source split, mixed-compression training setting, and global 16-frame face
+sampling protocol:
+
+```text
+TIM      train.py --variant v1
+FTCN     train.py --variant ftcn
+FreqNet  train.py --variant freqnet
+```
+
+Baseline training uses the same `splits.json`, `face_cache_uniform16_all`,
+`crf_src crf0 crf23 crf40`, `n_frames=16`, and `sampling_mode=global16` setting
+as GRFR. Full commands are provided in `docs/reproduction.md`.
+
 ## Documentation
 
 Detailed documentation is provided in:
@@ -151,7 +167,8 @@ scripts/README.md
 
 ## Availability
 
-The repository includes the final GRFR implementation, TIM baseline code,
-preprocessing scripts, public split files, preliminary-study utilities,
-ablation scripts, and evaluation protocols. Raw datasets, derived face caches,
-model checkpoints, and local manuscript drafts are not redistributed.
+The repository includes the final GRFR implementation, TIM/FTCN/FreqNet
+baseline code, preprocessing scripts, public split files, preliminary-study
+utilities, ablation scripts, and evaluation protocols. Raw datasets, derived
+face caches, model checkpoints, and local manuscript drafts are not
+redistributed.

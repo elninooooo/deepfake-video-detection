@@ -18,6 +18,8 @@ import torch
 import torch.nn as nn
 
 from .fusion_head import FusionHead
+from .baseline_freqnet import FreqNetBaseline
+from .baseline_ftcn import FTCNBaseline
 from .phase_branch import PhaseBranch
 from .residual_spectral_relation import ResidualSpectralRelationBranch
 from .spatial_backbone import SpatialBackbone
@@ -164,6 +166,22 @@ class PhaseTransformerDetector(nn.Module):
 
 def build_model_from_args(args) -> PhaseTransformerDetector:
     """Convenience factory used by train.py."""
+    if args.variant == "ftcn":
+        return FTCNBaseline(
+            n_frames=args.n_frames,
+            base_channels=args.ftcn_base_channels,
+            d_model=args.ftcn_d_model,
+            n_heads=args.ftcn_heads,
+            transformer_layers=args.ftcn_layers,
+            mlp_dim=args.ftcn_mlp_dim,
+            dropout=args.ftcn_dropout,
+        )
+    if args.variant == "freqnet":
+        return FreqNetBaseline(
+            base_channels=args.freqnet_base_channels,
+            frame_agg=args.freqnet_frame_agg,
+        )
+
     variant_map = {
         "v1": dict(use_tim=True,  use_phase=False, use_mask=False, phase_residual=False),
         "v2": dict(use_tim=False, use_phase=True,  use_mask=False, phase_residual=False),

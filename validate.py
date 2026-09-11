@@ -37,7 +37,8 @@ def evaluate_ckpt(args, ckpt_path: Path, crf_tag: str, split: str):
 
     ds = CelebDFClipDataset(args.splits, args.face_cache,
                             crf_tag=crf_tag, split=split,
-                            n_frames=args.n_frames, train=False)
+                            n_frames=args.n_frames, train=False,
+                            sampling_mode=args.sampling_mode)
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
                         num_workers=args.num_workers, pin_memory=True,
                         collate_fn=collate_with_meta)

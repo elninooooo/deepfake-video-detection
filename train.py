@@ -13,6 +13,9 @@ import os
 import sys
 from pathlib import Path
 
+# Avoid slow TorchDynamo/Inductor imports during optimizer setup on Windows.
+os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -73,7 +76,8 @@ def adjust_lr(optimizer, factor: float, min_lr: float) -> bool:
 def build_split_dataset(args, crfs, split: str, train: bool):
     datasets = [
         CelebDFClipDataset(args.splits, args.face_cache, crf_tag=crf,
-                           split=split, n_frames=args.n_frames, train=train)
+                           split=split, n_frames=args.n_frames, train=train,
+                           sampling_mode=args.sampling_mode)
         for crf in crfs
     ]
     if len(datasets) == 1:
@@ -97,6 +101,7 @@ def main():
     train_set = build_split_dataset(args, train_crfs, split="train", train=True)
     val_set = build_split_dataset(args, val_crfs, split="val", train=False)
     print(f"train crfs: {train_crfs}  val crfs: {val_crfs}")
+    print(f"sampling_mode: {args.sampling_mode}")
     print(f"train clips: {len(train_set)}  val clips: {len(val_set)}")
 
     sampler = make_class_balanced_sampler(train_set) if args.use_balanced_sampler else None
@@ -110,7 +115,7 @@ def main():
 
     # ---- model --------------------------------------------------------
     model = build_model_from_args(args).to(device)
-    print(model.cfg)
+    print(getattr(model, "cfg", model.__class__.__name__))
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"trainable params: {n_params/1e6:.2f} M")
 

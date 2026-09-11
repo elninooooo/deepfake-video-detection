@@ -58,7 +58,8 @@ def collate(batch):
 def build_eval_dataset(args, crfs, split):
     datasets = [
         CelebDFClipDataset(args.splits, args.face_cache, crf_tag=crf,
-                           split=split, n_frames=args.n_frames, train=False)
+                           split=split, n_frames=args.n_frames, train=False,
+                           sampling_mode=args.sampling_mode)
         for crf in crfs
     ]
     if len(datasets) == 1:
@@ -149,7 +150,9 @@ def main():
     p = argparse.ArgumentParser(
         "Evaluate checkpoints with validation-set threshold calibration.")
     p.add_argument("--ckpt", required=True)
-    p.add_argument("--variant", choices=["v1", "v2", "v3", "v4", "v5", "v6", "v8", "v10"],
+    p.add_argument("--variant", choices=[
+        "v1", "v2", "v3", "v4", "v5", "v6", "v8", "v10", "ftcn", "freqnet",
+    ],
                    required=True)
     p.add_argument("--splits", default="splits.json")
     p.add_argument("--face_cache", default="face_cache")
@@ -168,6 +171,9 @@ def main():
     p.add_argument("--target_recall", type=float, default=0.90)
     p.add_argument("--threshold_steps", type=int, default=1001)
     p.add_argument("--n_frames", type=int, default=16)
+    p.add_argument("--sampling_mode",
+                   choices=["legacy", "local16", "global16", "s2", "4x4"],
+                   default="legacy")
     p.add_argument("--batch_size", type=int, default=4)
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--mask_ratio", type=float, default=0.5)
@@ -189,6 +195,15 @@ def main():
                    default="full")
     p.add_argument("--d_model", type=int, default=512)
     p.add_argument("--n_heads", type=int, default=4)
+    p.add_argument("--ftcn_base_channels", type=int, default=32)
+    p.add_argument("--ftcn_d_model", type=int, default=1008)
+    p.add_argument("--ftcn_heads", type=int, default=12)
+    p.add_argument("--ftcn_layers", type=int, default=1)
+    p.add_argument("--ftcn_mlp_dim", type=int, default=2048)
+    p.add_argument("--ftcn_dropout", type=float, default=0.1)
+    p.add_argument("--freqnet_base_channels", type=int, default=32)
+    p.add_argument("--freqnet_frame_agg", choices=["mean_logit", "max_logit"],
+                   default="mean_logit")
     p.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
     p.add_argument("--out_dir", default="results/threshold_calibration")
     args = p.parse_args()

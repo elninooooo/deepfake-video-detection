@@ -122,7 +122,13 @@ Stage 2 freezes the frame-level branch and trains the CLS aggregator:
   --out_dir results\v10_frozen_cls\random8_seed42
 ```
 
-## TIM Baseline
+## Baselines
+
+All baselines use the same source split, mixed-compression training set, and
+global 16-frame face sampling protocol as GRFR. This keeps the comparison
+focused on the model design rather than data or sampling differences.
+
+### TIM Baseline
 
 ```powershell
 .\.venv\Scripts\python.exe train.py `
@@ -132,6 +138,7 @@ Stage 2 freezes the frame-level branch and trains the CLS aggregator:
   --train_crfs crf_src crf0 crf23 crf40 `
   --val_crfs crf_src crf0 crf23 crf40 `
   --n_frames 16 `
+  --sampling_mode global16 `
   --batch_size 2 `
   --num_workers 4 `
   --epochs 50 `
@@ -152,7 +159,90 @@ Stage 2 freezes the frame-level branch and trains the CLS aggregator:
   --include_mixed `
   --split test `
   --n_frames 16 `
+  --sampling_mode global16 `
   --batch_size 8 `
   --num_workers 4 `
   --out_dir results\v1_tim_global16_mixed_fair_seed42
+```
+
+### FTCN Baseline
+
+The FTCN baseline follows the temporal-convolution idea of using spatial
+kernel size 1 in the video convolution branch and a lightweight transformer for
+video-level temporal aggregation.
+
+```powershell
+.\.venv\Scripts\python.exe train.py `
+  --variant ftcn `
+  --splits splits.json `
+  --face_cache face_cache_uniform16_all `
+  --train_crfs crf_src crf0 crf23 crf40 `
+  --val_crfs crf_src crf0 crf23 crf40 `
+  --n_frames 16 `
+  --sampling_mode global16 `
+  --batch_size 2 `
+  --num_workers 4 `
+  --epochs 50 `
+  --lr 0.0001 `
+  --seed 42 `
+  --device cuda `
+  --name baseline_ftcn_global16_mixed_seed42
+```
+
+```powershell
+.\.venv\Scripts\python.exe eval_cross_compression.py `
+  --ckpt checkpoints\baseline_ftcn_global16_mixed_seed42\best.pth `
+  --variant ftcn `
+  --splits splits.json `
+  --face_cache face_cache_uniform16_all `
+  --train_crf mixed `
+  --crfs crf_src crf0 crf23 crf40 `
+  --include_mixed `
+  --split test `
+  --n_frames 16 `
+  --sampling_mode global16 `
+  --batch_size 8 `
+  --num_workers 4 `
+  --out_dir results\baseline_ftcn_global16_mixed_seed42
+```
+
+### FreqNet Baseline
+
+The FreqNet baseline is implemented as an image-level frequency-aware detector.
+For video-level evaluation, each sampled frame in the global16 clip is scored
+by the same FreqNet branch and frame logits are averaged into one clip logit.
+
+```powershell
+.\.venv\Scripts\python.exe train.py `
+  --variant freqnet `
+  --splits splits.json `
+  --face_cache face_cache_uniform16_all `
+  --train_crfs crf_src crf0 crf23 crf40 `
+  --val_crfs crf_src crf0 crf23 crf40 `
+  --n_frames 16 `
+  --sampling_mode global16 `
+  --batch_size 2 `
+  --num_workers 4 `
+  --epochs 50 `
+  --lr 0.0001 `
+  --seed 42 `
+  --device cuda `
+  --name baseline_freqnet_global16_mixed_seed42
+```
+
+```powershell
+.\.venv\Scripts\python.exe eval_cross_compression.py `
+  --ckpt checkpoints\baseline_freqnet_global16_mixed_seed42\best.pth `
+  --variant freqnet `
+  --splits splits.json `
+  --face_cache face_cache_uniform16_all `
+  --train_crf mixed `
+  --crfs crf_src crf0 crf23 crf40 `
+  --include_mixed `
+  --split test `
+  --n_frames 16 `
+  --sampling_mode global16 `
+  --batch_size 8 `
+  --num_workers 4 `
+  --out_dir results\baseline_freqnet_global16_mixed_seed42
 ```
